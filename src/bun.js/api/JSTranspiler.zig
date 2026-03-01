@@ -586,9 +586,8 @@ pub const TransformTask = struct {
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
-        if (this.tsconfig) |tsconfig| {
-            tsconfig.deinit();
-        }
+        // tsconfig is owned by JSTranspiler, not by TransformTask.
+        // Do not free it here — JSTranspiler.deinit handles it.
         this.js_instance.deref();
         bun.destroy(this);
     }
@@ -662,6 +661,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     });
     errdefer {
         this.config.log.deinit();
+        if (this.config.tsconfig) |tsconfig| {
+            tsconfig.deinit();
+        }
         this.arena.deinit();
         this.ref_count.clearWithoutDestructor();
         bun.destroy(this);
@@ -746,6 +748,9 @@ pub fn deinit(this: *JSTranspiler) void {
         this.buffer_writer.?.buffer.deinit();
     }
 
+    if (this.config.tsconfig) |tsconfig| {
+        tsconfig.deinit();
+    }
     this.arena.deinit();
     bun.destroy(this);
 }
