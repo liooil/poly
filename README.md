@@ -87,6 +87,15 @@ const result = await python.call("./math_tools.py", "add", [20, 22]);
 - [验证记录](docs/validation.md)
 - [可复现构建与二进制发布方案](docs/release-build.md)
 
+## 持续集成
+
+- `CI` 在 push、PR 与 merge queue 上运行 Linux、macOS、Windows 三平台
+  RustPython bridge 测试，并检查格式、Clippy、TypeScript bundle、同进程
+  边界和 Bun 补丁适用性。
+- `Bun integration build` 仅手动触发。它按照 Bun 上游工具链约束完整构建
+  Linux x64 下游可执行文件，然后运行 Python 入口和 TS→Python smoke test。
+  完整构建较重，因此暂不放入每次提交的必跑路径。
+
 ## 许可证
 
 本项目自身代码使用 [MIT License](LICENSE)。最终 `poly` 二进制还会
