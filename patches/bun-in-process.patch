@@ -149,7 +149,7 @@ index 58fbdfb..92a7229 100644
 +        global_this.throw(format_args!("in-process RustPython call failed: {error}"))
 +    })?;
 +
-+    BunString::from_bytes(response.as_bytes()).to_js(global_this)
++    BunString::clone_utf8(response.as_bytes()).to_js(global_this)
 +}
 +
  #[bun_jsc::host_fn]
@@ -270,3 +270,16 @@ index a3171b4e..1eb7b316 100644
      std::wstringstream wss;
      wss << wif.rdbuf();
      return wss.str();
+diff --git a/src/runtime/node/win_watcher.rs b/src/runtime/node/win_watcher.rs
+index 897fe5cd..49e7b7a9 100644
+--- a/src/runtime/node/win_watcher.rs
++++ b/src/runtime/node/win_watcher.rs
+@@ -321,7 +321,7 @@ impl PathWatcher {
+         let readlink_result = sys::readlink(path, &mut outbuf);
+         let event_path: &ZStr = match readlink_result {
+             sys::Result::Err(err) => 'brk: {
+-                if err.errno == sys::E::NOENT as _ {
++                if err.errno == sys::E::NOENT as u16 {
+                     return sys::Result::Err(sys::Error {
+                         errno: err.errno,
+                         syscall: sys::Tag::open,

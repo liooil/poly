@@ -127,7 +127,8 @@ jobs:
             src/runtime/api/BunObject.rs \
             src/runtime/api/bun/spawn/stdio.rs \
             src/runtime/dns_jsc/options_jsc.rs \
-            src/runtime/node/node_fs.rs
+            src/runtime/node/node_fs.rs \
+            src/runtime/node/win_watcher.rs
           git -C "$bun_checkout" checkout --detach FETCH_HEAD
           git -C "$bun_checkout" apply --check \
             "$GITHUB_WORKSPACE/patches/bun-in-process.patch"
