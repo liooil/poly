@@ -1,0 +1,19 @@
+[project]
+name = "polyglot-runtime-example"
+version = "0.1.0"
+
+[entrypoints]
+typescript = "examples/main.ts"
+python = "examples/python_main.py"
+
+[runtimes]
+bun_mode = "in-process-fork"
+bun_commit = "e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7"
+python = "rustpython-0.5.0-embedded"
+
+[python]
+dependency_manager = "uv"
+allow_native_extensions = false
+
+[interop]
+mode = "in-process-json"

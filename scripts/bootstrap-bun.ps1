@@ -1,0 +1,86 @@
+$ErrorActionPreference = "Stop"
+
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$sourceRoot = Join-Path $projectRoot ".poly\bun-src"
+$pythonSource = Join-Path $projectRoot "crates\poly-python"
+$pythonTarget = Join-Path $sourceRoot "src\poly_python"
+$patchPath = Join-Path $projectRoot "patches\bun-in-process.patch"
+$distRoot = Join-Path $projectRoot "dist"
+$bunCommit = "e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7"
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "Git is required."
+}
+if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
+    throw "A released Bun binary is required to run Bun's build scripts."
+}
+if ($IsWindows -and $PSVersionTable.PSVersion.Major -lt 7) {
+    throw "Bun's Windows build requires PowerShell 7 (pwsh.exe)."
+}
+
+if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot ".git"))) {
+    New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+    git -C $sourceRoot init
+    git -C $sourceRoot config core.longpaths true
+    git -C $sourceRoot remote add origin "https://github.com/oven-sh/bun.git"
+    git -C $sourceRoot fetch --depth 1 origin $bunCommit
+    git -C $sourceRoot checkout --detach FETCH_HEAD
+}
+git -C $sourceRoot config core.longpaths true
+
+$actualCommit = (git -C $sourceRoot rev-parse HEAD).Trim()
+if ($actualCommit -ne $bunCommit) {
+    throw "Bun checkout is $actualCommit, expected $bunCommit."
+}
+
+$resolvedSource = [System.IO.Path]::GetFullPath($sourceRoot)
+$resolvedTarget = [System.IO.Path]::GetFullPath($pythonTarget)
+if (-not $resolvedTarget.StartsWith($resolvedSource, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to replace a Python target outside the pinned Bun checkout."
+}
+if (Test-Path -LiteralPath $pythonTarget) {
+    Remove-Item -LiteralPath $pythonTarget -Recurse -Force
+}
+Copy-Item -LiteralPath $pythonSource -Destination $pythonTarget -Recurse
+
+git -C $sourceRoot apply --check $patchPath 2>$null
+if ($LASTEXITCODE -eq 0) {
+    git -C $sourceRoot apply $patchPath
+} else {
+    git -C $sourceRoot apply --reverse --check $patchPath 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "The Bun integration patch does not apply cleanly to the pinned commit."
+    }
+}
+
+Push-Location $sourceRoot
+try {
+    # RustPython 0.5.0 expects the 0.9 malachite family. pymath 0.2 uses a
+    # deliberately broad "0" requirement, so a large workspace may otherwise
+    # select incompatible 0.9 and 0.10 BigInt types at the same time.
+    cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
+    if ($IsWindows) {
+        . (Join-Path $sourceRoot "scripts\vs-shell.ps1")
+    }
+    bun run build
+} finally {
+    Pop-Location
+}
+
+$binaryCandidates = @(
+    (Join-Path $sourceRoot "build\debug\bun-debug.exe"),
+    (Join-Path $sourceRoot "build\debug\bun-debug")
+)
+$binary = $binaryCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $binary) {
+    throw "Bun build completed but build/debug/bun-debug was not found."
+}
+
+New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
+$destination = if ($IsWindows) {
+    Join-Path $distRoot "poly.exe"
+} else {
+    Join-Path $distRoot "poly"
+}
+Copy-Item -LiteralPath $binary -Destination $destination -Force
+Write-Host "Built in-process polyglot runtime: $destination"
