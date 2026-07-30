@@ -21,6 +21,9 @@ scoop install llvm@21.1.8
 if ($LASTEXITCODE -ne 0) {
     throw "Could not install LLVM 21.1.8."
 }
+$llvmBin = Join-Path $scoopRoot "apps\llvm\current\bin"
+$env:Path = "$llvmBin;$env:Path"
+Add-Content -LiteralPath $env:GITHUB_PATH -Value $llvmBin
 
 foreach ($package in @("nasm", "perl", "ruby")) {
     scoop install $package
