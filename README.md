@@ -87,6 +87,12 @@ const result = await python.call("./math_tools.py", "add", [20, 22]);
 - [验证记录](docs/validation.md)
 - [可复现构建与二进制发布方案](docs/release-build.md)
 
+## 项目网站
+
+项目网站发布在 [liooil.github.io/poly](https://liooil.github.io/poly/)，
+源文件位于 [`website/`](website/)。对 `main` 分支中的网站文件进行修改后，
+GitHub Actions 会通过 [Pages 工作流](.github/workflows/pages.yml) 自动部署。
+
 ## 持续集成
 
 - `CI` 在 push、PR 与 merge queue 上运行 Linux、macOS、Windows 三平台
