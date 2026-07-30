@@ -76,15 +76,35 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Bun $Configuration configuration failed with exit code $LASTEXITCODE."
     }
-    ninja -C (Join-Path "build" $profile) clone-lolhtml
+
+    # A fresh Bun checkout does not necessarily order generated headers after
+    # every vendor-source fetch (zlib is one example). Fetch all source-backed
+    # dependencies before Cargo metadata inspection and the full Ninja build.
+    $buildDirectory = Join-Path "build" $profile
+    $cloneTargets = @(
+        ninja -C $buildDirectory -t targets all |
+            ForEach-Object {
+                if ($_ -match "^(clone-[^:]+):") {
+                    $Matches[1]
+                }
+            } |
+            Sort-Object -Unique
+    )
     if ($LASTEXITCODE -ne 0) {
-        throw "Bun lol-html preparation failed with exit code $LASTEXITCODE."
+        throw "Could not enumerate Bun dependency source targets."
+    }
+    if ($cloneTargets.Count -eq 0) {
+        throw "Bun configuration did not produce dependency source targets."
+    }
+    ninja -C $buildDirectory @cloneTargets
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bun dependency source preparation failed with exit code $LASTEXITCODE."
     }
 
     # RustPython 0.5.0 expects the 0.9 malachite family. pymath 0.2 uses a
     # deliberately broad "0" requirement, so a large workspace may otherwise
     # select incompatible 0.9 and 0.10 BigInt types at the same time. Cargo can
-    # resolve the complete Bun workspace only after clone-lolhtml has run.
+    # resolve the complete Bun workspace only after source dependencies exist.
     cargo tree -p poly_python -i malachite-bigint@0.10.0 --depth 0 *> $null
     if ($LASTEXITCODE -eq 0) {
         cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
@@ -118,7 +138,7 @@ $binaryCandidates = if ($Configuration -eq "Release") {
 }
 $binary = $binaryCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $binary) {
-    throw "Bun build completed but build/debug/bun-debug was not found."
+    throw "Bun $Configuration build completed but its executable was not found."
 }
 
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
