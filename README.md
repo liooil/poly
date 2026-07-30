@@ -201,6 +201,13 @@ upstream.toml                  Pinned Bun upstream source
 
 The linked design documents are currently written in Chinese.
 
+## Website
+
+The project website is published at
+[liooil.github.io/poly](https://liooil.github.io/poly/). Its source lives in
+[`website/`](website/), and changes on `main` are deployed through the
+[GitHub Pages workflow](.github/workflows/pages.yml).
+
 ## Continuous integration and releases
 
 - `CI` runs the RustPython bridge tests on Linux, macOS, and Windows. It also

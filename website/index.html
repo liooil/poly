@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Poly is one runtime and toolchain for TypeScript and Python: run either language, import across both ecosystems, and ship one executable."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Poly — One runtime for TypeScript and Python" />
+    <meta
+      property="og:description"
+      content="Run either language. Import across both ecosystems. Ship one executable."
+    />
+    <meta property="og:url" content="https://liooil.github.io/poly/" />
+    <meta
+      property="og:image"
+      content="https://liooil.github.io/poly/og-unified-runtime.png"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Poly — TypeScript and Python, one runtime"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Poly — One runtime for TypeScript and Python" />
+    <meta
+      name="twitter:description"
+      content="Run either language. Import across both ecosystems. Ship one executable."
+    />
+    <meta
+      name="twitter:image"
+      content="https://liooil.github.io/poly/og-unified-runtime.png"
+    />
+    <meta name="theme-color" content="#f2efe7" />
+    <title>Poly — One runtime for TypeScript and Python</title>
+    <link rel="canonical" href="https://liooil.github.io/poly/" />
+    <link rel="alternate" hreflang="en" href="https://liooil.github.io/poly/" />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://liooil.github.io/poly/zh-CN/"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Poly home">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#vision">Vision</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#status">Status</a>
+        <a class="nav-language" href="./zh-CN/" lang="zh-CN">中文</a>
+        <a class="nav-github" href="https://github.com/liooil/poly">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="eyebrow">
+            <span class="pulse" aria-hidden="true"></span>
+            Early prototype · open source
+          </div>
+          <h1>
+            One runtime.
+            <span>Two ecosystems.</span>
+          </h1>
+          <p class="hero-lead">
+            Run TypeScript or Python. Import across both ecosystems. Build and
+            ship one executable.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quick-start">Try the prototype</a>
+            <a class="button button-secondary" href="https://github.com/liooil/poly">
+              Explore the code
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-terminal" aria-label="TypeScript importing a Python module">
+          <div class="terminal-bar">
+            <div class="window-dots" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="tabs" role="tablist" aria-label="Code examples">
+              <button
+                class="tab is-active"
+                type="button"
+                data-tab="ts"
+                role="tab"
+                aria-selected="true"
+              >
+                main.ts
+              </button>
+              <button
+                class="tab"
+                type="button"
+                data-tab="py"
+                role="tab"
+                aria-selected="false"
+              >
+                math.py
+              </button>
+            </div>
+            <button
+              class="copy-button"
+              type="button"
+              aria-label="Copy current code"
+              data-idle-label="Copy"
+              data-copied-label="Copied"
+            >
+              Copy
+            </button>
+          </div>
+          <pre class="code-panel is-active" data-panel="ts"><code><span class="code-comment">// target API</span>
+<span class="code-muted">import</span> { add } <span class="code-muted">from</span> <span class="code-string">"./math.py"</span>
+  <span class="code-muted">with</span> { type: <span class="code-string">"python"</span> };
+
+console.log(add(<span class="code-number">20</span>, <span class="code-number">22</span>)); <span class="code-comment">// 42</span></code></pre>
+          <pre class="code-panel" data-panel="py"><code><span class="code-muted">def</span> <span class="code-fn">add</span>(left, right):
+    <span class="code-muted">return</span> left + right</code></pre>
+          <div class="terminal-output">
+            <span class="prompt">$</span> poly run main.ts
+            <span class="result">42</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="signal-strip" aria-label="Runtime highlights">
+        <div><strong>01</strong><span>executable</span></div>
+        <div><strong>01</strong><span>OS process</span></div>
+        <div><strong>02</strong><span>language ecosystems</span></div>
+        <div><strong>00</strong><span>sidecar processes</span></div>
+      </section>
+
+      <section class="section" id="vision">
+        <div class="section-heading">
+          <p class="kicker">One project, two ecosystems</p>
+          <h2>Run either.<br />Import both.<br />Ship one.</h2>
+          <p>
+            Poly is building a unified module graph, dependency workflow, and
+            release path around Bun and RustPython—without turning either
+            language into a separate service.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature feature-orange">
+            <span class="feature-index">01 / Runtime</span>
+            <h3>Both languages are entry points</h3>
+            <p>
+              Run a TypeScript application or a Python tool through the same
+              executable and the same project configuration.
+            </p>
+            <code>poly run app.ts · poly run tool.py</code>
+          </article>
+          <article class="feature feature-pink">
+            <span class="feature-index">02 / Modules</span>
+            <h3>Python files are modules, not services</h3>
+            <p>
+              The target module system makes cross-language imports explicit,
+              analyzable, and native to the project.
+            </p>
+            <code>import { add } from "./math.py" with { type: "python" }</code>
+          </article>
+          <article class="feature feature-lime">
+            <span class="feature-index">03 / Dependencies</span>
+            <h3>Keep Bun. Keep uv.</h3>
+            <p>
+              npm packages stay in Bun's ecosystem. Python packages stay locked
+              by uv, with Poly checking what RustPython can actually run.
+            </p>
+            <code>poly sync</code>
+          </article>
+          <article class="feature feature-blue">
+            <span class="feature-index">04 / Distribution</span>
+            <h3>One application artifact</h3>
+            <p>
+              The roadmap combines both module graphs, their dependencies, and
+              project resources into one platform-native executable.
+            </p>
+            <code>poly build app.ts</code>
+          </article>
+        </div>
+      </section>
+
+      <section class="architecture-section" id="architecture">
+        <div class="architecture-copy">
+          <p class="kicker">One executable. One process.</p>
+          <h2>Two runtimes, one Rust host.</h2>
+          <p>
+            The M0 prototype embeds RustPython directly into a pinned Bun source
+            tree. Its small synchronous bridge proves the architecture before
+            the higher-level module system is built.
+          </p>
+          <ul class="check-list">
+            <li>Bun runs JavaScript and TypeScript</li>
+            <li>RustPython runs Python with a frozen standard library</li>
+            <li>No subprocess, sidecar, socket, or stdio RPC</li>
+            <li>Clear path from JSON calls to imports and object proxies</li>
+          </ul>
+        </div>
+
+        <div class="architecture-map" aria-label="Poly runtime architecture">
+          <div class="arch-node arch-js">
+            <span>Bun / JavaScriptCore</span>
+            <strong>JS / TS</strong>
+          </div>
+          <div class="arch-link">
+            <span>native host call</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-rust">
+            <span>Rust host</span>
+            <strong>Poly</strong>
+          </div>
+          <div class="arch-link">
+            <span>direct call</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-py">
+            <span>RustPython</span>
+            <strong>Python</strong>
+          </div>
+          <div class="thread-line">
+            <span>one process boundary</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-section" id="status">
+        <div class="status-card">
+          <div>
+            <p class="kicker">Project status</p>
+            <h2>Working foundation.<br />Product ahead.</h2>
+          </div>
+          <p>
+            Poly is an engineering prototype. The source integration and core
+            bridge exist today; the module system, dependency workflow, and
+            standalone application builder remain active work.
+          </p>
+        </div>
+        <div class="status-table" role="table" aria-label="Feature status">
+          <div class="status-row" role="row">
+            <span role="cell">Bun + RustPython source integration</span>
+            <strong class="status-done" role="cell">Implemented</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">TypeScript and Python entry-point routing</span>
+            <strong class="status-progress" role="cell">Validating</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">RustPython JSON call bridge</span>
+            <strong class="status-done" role="cell">Core tested</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Cross-language imports and callable proxies</span>
+            <strong class="status-planned" role="cell">Planned</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Bun + uv dependency workflow</span>
+            <strong class="status-planned" role="cell">Planned</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Standalone application build</span>
+            <strong class="status-planned" role="cell">Planned</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-start" id="quick-start">
+        <div class="quick-start-copy">
+          <p class="kicker">Try the current prototype</p>
+          <h2>Build Poly from source.</h2>
+          <p>
+            The current build follows Bun's native toolchain requirements and
+            may take time on a clean machine. Start with the repository guide
+            for exact prerequisites and verified boundaries.
+          </p>
+        </div>
+        <div class="install-command">
+          <pre><code><span class="prompt">$</span> git clone https://github.com/liooil/poly
+<span class="prompt">$</span> cd poly
+<span class="prompt">$</span> pwsh ./scripts/bootstrap-bun.ps1 -Configuration Release</code></pre>
+          <button
+            class="copy-install"
+            type="button"
+            aria-label="Copy build commands"
+            data-idle-label="Copy commands"
+            data-copied-label="Copied"
+          >
+            Copy commands
+          </button>
+        </div>
+        <div class="quick-links">
+          <a href="https://github.com/liooil/poly">Source code <span>↗</span></a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/technical-design.md">
+            Technical design <span>↗</span>
+          </a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/roadmap.md">
+            Roadmap <span>↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="./">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <p>Run either language. Import both ecosystems. Ship one executable.</p>
+      <p>Experimental software · MIT licensed</p>
+    </footer>
+  </body>
+</html>

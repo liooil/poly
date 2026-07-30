@@ -187,6 +187,12 @@ upstream.toml                  固定的 Bun 上游来源
 - [验证记录](docs/validation.md)
 - [可复现构建与二进制发布方案](docs/release-build.md)
 
+## 项目网站
+
+项目网站发布在 [liooil.github.io/poly](https://liooil.github.io/poly/)，
+源文件位于 [`website/`](website/)。`main` 分支中的网站改动会通过
+[GitHub Pages 工作流](.github/workflows/pages.yml)自动部署。
+
 ## 持续集成与发布
 
 - `CI` 在 Linux、macOS 和 Windows 上运行 RustPython bridge 测试，并检查

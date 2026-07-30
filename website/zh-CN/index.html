@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Poly 是一个同时属于 TypeScript 和 Python 的运行时与工具链：运行任一种语言，跨越两个生态导入模块，最终交付一个可执行文件。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Poly — TypeScript 与 Python 的统一运行时" />
+    <meta
+      property="og:description"
+      content="运行任一种语言，跨越两个生态导入模块，最终交付一个可执行文件。"
+    />
+    <meta property="og:url" content="https://liooil.github.io/poly/zh-CN/" />
+    <meta
+      property="og:image"
+      content="https://liooil.github.io/poly/og-unified-runtime.png"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Poly — TypeScript 与 Python，一个运行时"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Poly — TypeScript 与 Python 的统一运行时" />
+    <meta
+      name="twitter:description"
+      content="运行任一种语言，跨越两个生态导入模块，最终交付一个可执行文件。"
+    />
+    <meta
+      name="twitter:image"
+      content="https://liooil.github.io/poly/og-unified-runtime.png"
+    />
+    <meta name="theme-color" content="#f2efe7" />
+    <title>Poly — TypeScript 与 Python 的统一运行时</title>
+    <link rel="canonical" href="https://liooil.github.io/poly/zh-CN/" />
+    <link rel="alternate" hreflang="en" href="https://liooil.github.io/poly/" />
+    <link
+      rel="alternate"
+      hreflang="zh-CN"
+      href="https://liooil.github.io/poly/zh-CN/"
+    />
+    <link rel="stylesheet" href="../styles.css" />
+    <script src="../script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+
+    <header class="site-header">
+      <a class="brand" href="../" aria-label="Poly 首页">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <nav aria-label="主导航">
+        <a href="#vision">愿景</a>
+        <a href="#architecture">架构</a>
+        <a href="#status">状态</a>
+        <a class="nav-language" href="../" lang="en">English</a>
+        <a class="nav-github" href="https://github.com/liooil/poly">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="eyebrow">
+            <span class="pulse" aria-hidden="true"></span>
+            早期原型 · 开源
+          </div>
+          <h1>
+            一个运行时。
+            <span>两个生态。</span>
+          </h1>
+          <p class="hero-lead">
+            运行 TypeScript 或 Python，跨越两个生态导入模块，构建并交付一个
+            可执行文件。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quick-start">体验当前原型</a>
+            <a class="button button-secondary" href="https://github.com/liooil/poly">
+              浏览源代码
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-terminal" aria-label="TypeScript 导入 Python 模块示例">
+          <div class="terminal-bar">
+            <div class="window-dots" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="tabs" role="tablist" aria-label="代码示例">
+              <button
+                class="tab is-active"
+                type="button"
+                data-tab="ts"
+                role="tab"
+                aria-selected="true"
+              >
+                main.ts
+              </button>
+              <button
+                class="tab"
+                type="button"
+                data-tab="py"
+                role="tab"
+                aria-selected="false"
+              >
+                math.py
+              </button>
+            </div>
+            <button
+              class="copy-button"
+              type="button"
+              aria-label="复制当前代码"
+              data-idle-label="复制"
+              data-copied-label="已复制"
+            >
+              复制
+            </button>
+          </div>
+          <pre class="code-panel is-active" data-panel="ts"><code><span class="code-comment">// 目标 API</span>
+<span class="code-muted">import</span> { add } <span class="code-muted">from</span> <span class="code-string">"./math.py"</span>
+  <span class="code-muted">with</span> { type: <span class="code-string">"python"</span> };
+
+console.log(add(<span class="code-number">20</span>, <span class="code-number">22</span>)); <span class="code-comment">// 42</span></code></pre>
+          <pre class="code-panel" data-panel="py"><code><span class="code-muted">def</span> <span class="code-fn">add</span>(left, right):
+    <span class="code-muted">return</span> left + right</code></pre>
+          <div class="terminal-output">
+            <span class="prompt">$</span> poly run main.ts
+            <span class="result">42</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="signal-strip" aria-label="运行时特点">
+        <div><strong>01</strong><span>个可执行文件</span></div>
+        <div><strong>01</strong><span>个 OS 进程</span></div>
+        <div><strong>02</strong><span>个语言生态</span></div>
+        <div><strong>00</strong><span>个 sidecar 进程</span></div>
+      </section>
+
+      <section class="section" id="vision">
+        <div class="section-heading">
+          <p class="kicker">一个项目，两个生态</p>
+          <h2>运行任一语言。<br />导入两个生态。<br />交付一个文件。</h2>
+          <p>
+            Poly 正在 Bun 与 RustPython 之上构建统一的模块图、依赖工作流和
+            发布路径，而不是把任何一种语言变成独立服务。
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature feature-orange">
+            <span class="feature-index">01 / 运行时</span>
+            <h3>两种语言都是入口</h3>
+            <p>
+              通过同一个可执行文件和同一份项目配置，运行 TypeScript 应用
+              或 Python 工具。
+            </p>
+            <code>poly run app.ts · poly run tool.py</code>
+          </article>
+          <article class="feature feature-pink">
+            <span class="feature-index">02 / 模块</span>
+            <h3>Python 文件是模块，不是服务</h3>
+            <p>
+              目标模块系统让跨语言 import 显式、可分析，并成为项目的原生
+              组成部分。
+            </p>
+            <code>import { add } from "./math.py" with { type: "python" }</code>
+          </article>
+          <article class="feature feature-lime">
+            <span class="feature-index">03 / 依赖</span>
+            <h3>保留 Bun，也保留 uv</h3>
+            <p>
+              npm 包留在 Bun 生态中，Python 包继续由 uv 锁定，再由 Poly
+              检查 RustPython 实际能够运行的内容。
+            </p>
+            <code>poly sync</code>
+          </article>
+          <article class="feature feature-blue">
+            <span class="feature-index">04 / 分发</span>
+            <h3>一个应用产物</h3>
+            <p>
+              路线图将两种语言的模块图、依赖和项目资源组合成一个平台原生
+              可执行文件。
+            </p>
+            <code>poly build app.ts</code>
+          </article>
+        </div>
+      </section>
+
+      <section class="architecture-section" id="architecture">
+        <div class="architecture-copy">
+          <p class="kicker">一个可执行文件，一个进程</p>
+          <h2>两个运行时，一个 Rust host。</h2>
+          <p>
+            M0 原型把 RustPython 直接嵌入固定版本的 Bun 源码树。这个精简的
+            同步 bridge 先验证架构，再逐步构建更高层的模块系统。
+          </p>
+          <ul class="check-list">
+            <li>Bun 运行 JavaScript 与 TypeScript</li>
+            <li>RustPython 运行 Python 与冻结的标准库</li>
+            <li>没有子进程、sidecar、socket 或 stdio RPC</li>
+            <li>从 JSON 调用演进到 import 与对象代理的清晰路径</li>
+          </ul>
+        </div>
+
+        <div class="architecture-map" aria-label="Poly 运行时架构">
+          <div class="arch-node arch-js">
+            <span>Bun / JavaScriptCore</span>
+            <strong>JS / TS</strong>
+          </div>
+          <div class="arch-link">
+            <span>原生 host 调用</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-rust">
+            <span>Rust host</span>
+            <strong>Poly</strong>
+          </div>
+          <div class="arch-link">
+            <span>直接调用</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-py">
+            <span>RustPython</span>
+            <strong>Python</strong>
+          </div>
+          <div class="thread-line">
+            <span>一个进程边界</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-section" id="status">
+        <div class="status-card">
+          <div>
+            <p class="kicker">项目状态</p>
+            <h2>基础已经成形。<br />产品仍在前方。</h2>
+          </div>
+          <p>
+            Poly 仍是工程原型。目前已经具备源码集成和核心 bridge；模块系统、
+            依赖工作流和独立应用构建器仍在开发中。
+          </p>
+        </div>
+        <div class="status-table" role="table" aria-label="功能状态">
+          <div class="status-row" role="row">
+            <span role="cell">Bun + RustPython 源码集成</span>
+            <strong class="status-done" role="cell">已实现</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">TypeScript 与 Python 入口分派</span>
+            <strong class="status-progress" role="cell">验证中</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">RustPython JSON 调用桥</span>
+            <strong class="status-done" role="cell">核心已测试</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">跨语言 import 与 callable proxy</span>
+            <strong class="status-planned" role="cell">计划中</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Bun + uv 依赖工作流</span>
+            <strong class="status-planned" role="cell">计划中</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">独立应用构建</span>
+            <strong class="status-planned" role="cell">计划中</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-start" id="quick-start">
+        <div class="quick-start-copy">
+          <p class="kicker">体验当前原型</p>
+          <h2>从源码构建 Poly。</h2>
+          <p>
+            当前构建遵循 Bun 的原生工具链要求，在全新环境中可能需要较长
+            时间。请从仓库文档开始了解完整前置条件和已验证边界。
+          </p>
+        </div>
+        <div class="install-command">
+          <pre><code><span class="prompt">$</span> git clone https://github.com/liooil/poly
+<span class="prompt">$</span> cd poly
+<span class="prompt">$</span> pwsh ./scripts/bootstrap-bun.ps1 -Configuration Release</code></pre>
+          <button
+            class="copy-install"
+            type="button"
+            aria-label="复制构建命令"
+            data-idle-label="复制命令"
+            data-copied-label="已复制"
+          >
+            复制命令
+          </button>
+        </div>
+        <div class="quick-links">
+          <a href="https://github.com/liooil/poly">源代码 <span>↗</span></a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/technical-design.md">
+            技术方案 <span>↗</span>
+          </a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/roadmap.md">
+            路线图 <span>↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="../">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <p>运行任一种语言，导入两个生态，交付一个可执行文件。</p>
+      <p>实验性软件 · MIT 许可证</p>
+    </footer>
+  </body>
+</html>
