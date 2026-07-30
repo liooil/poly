@@ -117,12 +117,17 @@ jobs:
           git -C "$bun_checkout" sparse-checkout init --no-cone
           git -C "$bun_checkout" sparse-checkout set \
             Cargo.toml \
+            scripts/build/bun.ts \
             src/bun_bin/Cargo.toml \
             src/bun_bin/lib.rs \
             src/jsc/bindings/BunObject+exports.h \
             src/jsc/bindings/BunObject.cpp \
+            src/jsc/bindings/windows/rescle.cpp \
             src/runtime/Cargo.toml \
-            src/runtime/api/BunObject.rs
+            src/runtime/api/BunObject.rs \
+            src/runtime/api/bun/spawn/stdio.rs \
+            src/runtime/dns_jsc/options_jsc.rs \
+            src/runtime/node/node_fs.rs
           git -C "$bun_checkout" checkout --detach FETCH_HEAD
           git -C "$bun_checkout" apply --check \
             "$GITHUB_WORKSPACE/patches/bun-in-process.patch"
