@@ -11,6 +11,10 @@ description = "Embedded RustPython backend for the Polyglot Bun fork"
 # dependency as `0`, so an unlocked downstream workspace otherwise resolves
 # two incompatible BigInt types (0.9 and 0.10).
 malachite-bigint = "=0.9.1"
+# RustPython 0.5.0's POSIX bindings expect the libc constant types from its
+# upstream lockfile. The currently resolved libc 0.2.189 exposes
+# POSIX_SPAWN_SETSID as i16 on Linux while rustpython-vm 0.5.0 expects i32.
+libc = "=0.2.183"
 rustpython = { version = "0.5.0", default-features = false, features = [
     "freeze-stdlib",
     "host_env",
