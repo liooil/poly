@@ -1,0 +1,3 @@
+[bun]
+repository = "https://github.com/oven-sh/bun.git"
+commit = "e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7"

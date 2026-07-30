@@ -1,0 +1,21 @@
+[package]
+name = "poly_python"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+description = "Embedded RustPython backend for the Polyglot Bun fork"
+
+[dependencies]
+# RustPython 0.5.0's upstream lockfile uses 0.9.1. `pymath` declares the
+# dependency as `0`, so an unlocked downstream workspace otherwise resolves
+# two incompatible BigInt types (0.9 and 0.10).
+malachite-bigint = "=0.9.1"
+rustpython = { version = "0.5.0", default-features = false, features = [
+    "freeze-stdlib",
+    "host_env",
+    "stdio",
+    "threading",
+] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

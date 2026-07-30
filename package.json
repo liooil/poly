@@ -1,0 +1,9 @@
+{
+  "name": "polyglot-runtime-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "example": "bun run examples/main.ts"
+  }
+}
