@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Poly is a single-process JavaScript, TypeScript, and Python runtime built with Bun, Rust, and RustPython."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Poly — JavaScript and Python, one runtime" />
+    <meta
+      property="og:description"
+      content="A Bun-powered polyglot runtime with RustPython embedded in the same process and runtime thread."
+    />
+    <meta property="og:url" content="https://liooil.github.io/poly/" />
+    <meta property="og:image" content="https://liooil.github.io/poly/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Poly — JavaScript and Python in one runtime"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Poly — JavaScript and Python, one runtime" />
+    <meta
+      name="twitter:description"
+      content="Bun and RustPython, embedded together in a Rust host."
+    />
+    <meta name="twitter:image" content="https://liooil.github.io/poly/og.png" />
+    <meta name="theme-color" content="#f2efe7" />
+    <title>Poly — JavaScript and Python, one runtime</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Poly home">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#runtime">Runtime</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#status">Status</a>
+        <a class="nav-github" href="https://github.com/liooil/poly">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <div class="eyebrow">
+            <span class="pulse" aria-hidden="true"></span>
+            Early prototype · open source
+          </div>
+          <h1>
+            JavaScript and Python.
+            <span>One runtime.</span>
+          </h1>
+          <p class="hero-lead">
+            Poly embeds Bun and RustPython inside one Rust host, so TypeScript and
+            Python can share a process, a runtime thread, and eventually a module
+            system.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#quick-start">Build from source</a>
+            <a class="button button-secondary" href="https://github.com/liooil/poly">
+              Explore the code
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-terminal" aria-label="TypeScript calling Python example">
+          <div class="terminal-bar">
+            <div class="window-dots" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="tabs" role="tablist" aria-label="Code examples">
+              <button
+                class="tab is-active"
+                type="button"
+                data-tab="ts"
+                role="tab"
+                aria-selected="true"
+              >
+                main.ts
+              </button>
+              <button
+                class="tab"
+                type="button"
+                data-tab="py"
+                role="tab"
+                aria-selected="false"
+              >
+                math.py
+              </button>
+            </div>
+            <button class="copy-button" type="button" aria-label="Copy current code">
+              Copy
+            </button>
+          </div>
+          <pre class="code-panel is-active" data-panel="ts"><code><span class="code-muted">import</span> { python } <span class="code-muted">from</span> <span class="code-string">"poly"</span>;
+
+<span class="code-muted">const</span> answer = <span class="code-muted">await</span> python.call(
+  <span class="code-string">"./math.py"</span>,
+  <span class="code-string">"add"</span>,
+  [<span class="code-number">20</span>, <span class="code-number">22</span>],
+);
+
+console.log(answer); <span class="code-comment">// 42</span></code></pre>
+          <pre class="code-panel" data-panel="py"><code><span class="code-muted">def</span> <span class="code-fn">add</span>(left, right):
+    <span class="code-muted">return</span> left + right</code></pre>
+          <div class="terminal-output">
+            <span class="prompt">$</span> poly main.ts
+            <span class="result">42</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="signal-strip" aria-label="Runtime highlights">
+        <div><strong>01</strong><span>OS process</span></div>
+        <div><strong>01</strong><span>runtime thread</span></div>
+        <div><strong>02</strong><span>language ecosystems</span></div>
+        <div><strong>00</strong><span>sidecar processes</span></div>
+      </section>
+
+      <section class="section" id="runtime">
+        <div class="section-heading">
+          <p class="kicker">A polyglot runtime, not two commands</p>
+          <h2>Keep the languages.<br />Lose the deployment split.</h2>
+          <p>
+            JavaScript orchestrates. Python computes. Rust owns the boundary.
+            Poly is exploring what happens when those roles live in one executable.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature feature-orange">
+            <span class="feature-index">01 / Bun</span>
+            <h3>TypeScript without ceremony</h3>
+            <p>
+              Bun provides the JavaScriptCore runtime, TypeScript execution,
+              bundling, npm compatibility, and the developer experience.
+            </p>
+            <code>poly app.ts</code>
+          </article>
+          <article class="feature feature-pink">
+            <span class="feature-index">02 / RustPython</span>
+            <h3>Python embedded, not spawned</h3>
+            <p>
+              RustPython is linked into the executable with a frozen standard
+              library. No Python installation or background process is required.
+            </p>
+            <code>poly script.py</code>
+          </article>
+          <article class="feature feature-lime">
+            <span class="feature-index">03 / Rust</span>
+            <h3>A deliberate shared boundary</h3>
+            <p>
+              A Rust host function connects JavaScriptCore to a thread-local
+              Python VM. The first bridge supports structured JSON values.
+            </p>
+            <code>Bun.polyPythonCall()</code>
+          </article>
+          <article class="feature feature-blue">
+            <span class="feature-index">04 / Distribution</span>
+            <h3>Designed for one-file apps</h3>
+            <p>
+              The roadmap combines Bun bundles, frozen Python modules, and locked
+              dependencies into a Windows or Linux executable.
+            </p>
+            <code>poly build main.ts</code>
+          </article>
+        </div>
+      </section>
+
+      <section class="architecture-section" id="architecture">
+        <div class="architecture-copy">
+          <p class="kicker">Same process. Same thread.</p>
+          <h2>The shortest possible bridge.</h2>
+          <p>
+            The current JS→Python path is synchronous and intentionally small.
+            Values cross as a versioned JSON envelope while each VM retains
+            ownership of its own objects.
+          </p>
+          <ul class="check-list">
+            <li>No subprocess or stdio RPC</li>
+            <li>Persistent, thread-local RustPython VM</li>
+            <li>Captured Python stdout and traceback</li>
+            <li>Explicit path toward object proxies and imports</li>
+          </ul>
+        </div>
+
+        <div class="architecture-map" aria-label="Poly runtime architecture">
+          <div class="arch-node arch-js">
+            <span>JavaScriptCore</span>
+            <strong>JS / TS</strong>
+          </div>
+          <div class="arch-link">
+            <span>native host call</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-rust">
+            <span>Rust host</span>
+            <strong>Poly bridge</strong>
+          </div>
+          <div class="arch-link">
+            <span>direct call</span>
+            <i aria-hidden="true">→</i>
+          </div>
+          <div class="arch-node arch-py">
+            <span>RustPython</span>
+            <strong>Python VM</strong>
+          </div>
+          <div class="thread-line">
+            <span>one runtime thread</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-section" id="status">
+        <div class="status-card">
+          <div>
+            <p class="kicker">Project status</p>
+            <h2>Working core.<br />Sharp edges.</h2>
+          </div>
+          <p>
+            Poly is an engineering prototype, not a CPython or Node.js replacement.
+            Today it proves the embedding model and a minimal JS→Python bridge.
+            Package compatibility, async interop, imports, and production release
+            hardening remain active work.
+          </p>
+        </div>
+        <div class="status-table" role="table" aria-label="Feature status">
+          <div class="status-row" role="row">
+            <span role="cell">Bun + RustPython in one process</span>
+            <strong class="status-done" role="cell">Working</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Synchronous JS→Python calls</span>
+            <strong class="status-done" role="cell">Working</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Windows x64 / Linux x64</span>
+            <strong class="status-progress" role="cell">In progress</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">uv dependencies and single-file bundle</span>
+            <strong class="status-planned" role="cell">Planned</strong>
+          </div>
+          <div class="status-row" role="row">
+            <span role="cell">Cross-language imports and object proxies</span>
+            <strong class="status-planned" role="cell">Planned</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-start" id="quick-start">
+        <div class="quick-start-copy">
+          <p class="kicker">Try the prototype</p>
+          <h2>Build Poly from source.</h2>
+          <p>
+            The current build follows Bun’s native toolchain requirements and may
+            take time on a clean machine. Start with the repository guide.
+          </p>
+        </div>
+        <div class="install-command">
+          <pre><code><span class="prompt">$</span> git clone https://github.com/liooil/poly
+<span class="prompt">$</span> cd poly
+<span class="prompt">$</span> pwsh ./scripts/bootstrap-bun.ps1</code></pre>
+          <button class="copy-install" type="button" aria-label="Copy build commands">
+            Copy commands
+          </button>
+        </div>
+        <div class="quick-links">
+          <a href="https://github.com/liooil/poly">Source code <span>↗</span></a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/technical-design.md">
+            Technical design <span>↗</span>
+          </a>
+          <a href="https://github.com/liooil/poly/blob/main/docs/roadmap.md">
+            Roadmap <span>↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand footer-brand" href="./">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>poly</span>
+      </a>
+      <p>JavaScript + Python, embedded together by Rust.</p>
+      <p>Experimental software · MIT licensed</p>
+    </footer>
+  </body>
+</html>
