@@ -155,3 +155,89 @@ index 58fbdfb..92a7229 100644
  #[bun_jsc::host_fn]
  fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
      use bun_jsc::StringJsc as _;
+diff --git a/src/runtime/api/bun/spawn/stdio.rs b/src/runtime/api/bun/spawn/stdio.rs
+index 62b4c224..a4260b77 100644
+--- a/src/runtime/api/bun/spawn/stdio.rs
++++ b/src/runtime/api/bun/spawn/stdio.rs
+@@ -464,7 +464,7 @@ impl Stdio {
+                 )));
+             }
+ 
+-            if file_fd >= i32::MAX as _ {
++            if file_fd >= i32::MAX {
+                 let mut formatter = jsc::console_object::Formatter::new(global);
+                 // `defer formatter.deinit()` — handled by Drop.
+                 return Err(global.throw_invalid_arguments(format_args!(
+diff --git a/src/runtime/dns_jsc/options_jsc.rs b/src/runtime/dns_jsc/options_jsc.rs
+index 348a66e6..3ea3577b 100644
+--- a/src/runtime/dns_jsc/options_jsc.rs
++++ b/src/runtime/dns_jsc/options_jsc.rs
+@@ -221,8 +221,8 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
+         b"family",
+         // `bun_sys::net::Address` exposes `.family() -> i32`.
+         match this.address.family() {
+-            f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
+-            f if f == super::netc::AF_INET6 as _ => JSValue::js_number(6.0),
++            f if f == super::netc::AF_INET as i32 => JSValue::js_number(4.0),
++            f if f == super::netc::AF_INET6 as i32 => JSValue::js_number(6.0),
+             _ => JSValue::js_number(0.0),
+         },
+     );
+diff --git a/src/runtime/node/node_fs.rs b/src/runtime/node/node_fs.rs
+index b1424354..7b949ce8 100644
+--- a/src/runtime/node/node_fs.rs
++++ b/src/runtime/node/node_fs.rs
+@@ -1528,7 +1528,7 @@ mod _async_tasks {
+             'brk: {
+                 match result {
+                     Err(ref err) => {
+-                        if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
++                        if err.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
+                             break 'brk;
+                         }
+                         parent.finish_concurrently(result);
+@@ -1902,7 +1902,7 @@ mod _async_tasks {
+                         &this.args,
+                     );
+                     if let Err(e) = &r {
+-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
++                        if e.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
+                             this.finish_concurrently(Ok(()));
+                             return;
+                         }
+@@ -1941,7 +1941,7 @@ mod _async_tasks {
+                         &this.args,
+                     );
+                     if let Err(e) = &r {
+-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
++                        if e.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
+                             this.on_copy(src, dest);
+                             this.finish_concurrently(Ok(()));
+                             return;
+@@ -8391,7 +8391,7 @@ impl NodeFS {
+                     args,
+                 );
+                 if let Err(ref e) = r {
+-                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
++                    if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
+                         return Ok(());
+                     }
+                 }
+@@ -8420,7 +8420,7 @@ impl NodeFS {
+                     args,
+                 );
+                 if let Err(ref e) = r {
+-                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
++                    if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
+                         return Ok(());
+                     }
+                 }
+@@ -8548,7 +8548,7 @@ impl NodeFS {
+                         args,
+                     );
+                     if let Err(ref e) = r {
+-                        if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
++                        if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
+                             continue;
+                         }
+                         return r;
