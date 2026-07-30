@@ -26,11 +26,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot ".git"))) {
     New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
     git -C $sourceRoot init
     git -C $sourceRoot config core.longpaths true
+    git -C $sourceRoot config core.autocrlf false
+    git -C $sourceRoot config core.eol lf
     git -C $sourceRoot remote add origin "https://github.com/oven-sh/bun.git"
     git -C $sourceRoot fetch --depth 1 origin $bunCommit
     git -C $sourceRoot checkout --detach FETCH_HEAD
 }
 git -C $sourceRoot config core.longpaths true
+git -C $sourceRoot config core.autocrlf false
+git -C $sourceRoot config core.eol lf
 
 $actualCommit = (git -C $sourceRoot rev-parse HEAD).Trim()
 if ($actualCommit -ne $bunCommit) {
@@ -81,9 +85,12 @@ try {
     # deliberately broad "0" requirement, so a large workspace may otherwise
     # select incompatible 0.9 and 0.10 BigInt types at the same time. Cargo can
     # resolve the complete Bun workspace only after clone-lolhtml has run.
-    cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not unify RustPython's malachite dependency."
+    cargo tree -p poly_python -i malachite-bigint@0.10.0 --depth 0 *> $null
+    if ($LASTEXITCODE -eq 0) {
+        cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not unify RustPython's malachite dependency."
+        }
     }
 
     if ($Configuration -eq "Release") {
