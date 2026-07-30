@@ -48,18 +48,16 @@ GitHub Actions Artifacts 仅用于工作流步骤之间传递中间产物和诊�
 
 ### 2. 多平台构建
 
-首批目标：
+第一版发布门禁：
 
 | 平台 | 目标产物 |
 |---|---|
-| Windows x64 | `poly-windows-x64.zip` |
-| Linux x64 | `poly-linux-x64.tar.gz` |
-| Linux arm64 | `poly-linux-arm64.tar.gz` |
-| macOS x64 | `poly-darwin-x64.tar.gz` |
-| macOS arm64 | `poly-darwin-arm64.tar.gz` |
+| Windows x64 | `poly-vX.Y.Z-windows-x64.zip` |
+| Linux x64 | `poly-vX.Y.Z-linux-x64.tar.gz` |
 
-每个平台都从同一 tag 和固定输入构建。早期如果某个平台尚未跑通，发布
-说明必须明确标记为未支持，不能上传未经验证的占位产物。
+两个平台都从同一 tag 和固定输入构建，并在各自 runner 上完成 Python
+入口及 TS→Python smoke test。任一平台未通过时不得创建 Release。Linux
+arm64 与 macOS 留到后续版本，不能上传未经验证的占位产物。
 
 ### 3. 发布包内容
 
