@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows and Linux
+    uses: ./.github/workflows/bun-integration.yml
+    permissions:
+      contents: read
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download built executables
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+
+      - name: Package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          asset_version="$GITHUB_REF_NAME"
+          bun_commit="$(sed -n 's/^commit = "\(.*\)"/\1/p' upstream.toml)"
+          mkdir -p packages/linux-x64 packages/windows-x64 release-assets
+
+          install -m 0755 artifacts/poly-linux-x64/poly packages/linux-x64/poly
+          install -m 0644 LICENSE THIRD_PARTY_NOTICES.md packages/linux-x64/
+          jq -n \
+            --arg version "$version" \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg bun_commit "$bun_commit" \
+            --arg target "x86_64-unknown-linux-gnu" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            '{version:$version,source_commit:$source_commit,bun_commit:$bun_commit,target:$target,workflow:$workflow}' \
+            > packages/linux-x64/BUILDINFO.json
+
+          install -m 0755 artifacts/poly-windows-x64/poly.exe packages/windows-x64/poly.exe
+          install -m 0644 LICENSE THIRD_PARTY_NOTICES.md packages/windows-x64/
+          jq -n \
+            --arg version "$version" \
+            --arg source_commit "$GITHUB_SHA" \
+            --arg bun_commit "$bun_commit" \
+            --arg target "x86_64-pc-windows-msvc" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            '{version:$version,source_commit:$source_commit,bun_commit:$bun_commit,target:$target,workflow:$workflow}' \
+            > packages/windows-x64/BUILDINFO.json
+
+          tar -C packages/linux-x64 -czf \
+            "release-assets/poly-${asset_version}-linux-x64.tar.gz" .
+          (
+            cd packages/windows-x64
+            zip -q -r "../../release-assets/poly-${asset_version}-windows-x64.zip" .
+          )
+          (
+            cd release-assets
+            sha256sum poly-* > SHA256SUMS
+          )
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" \
+              "${prerelease[@]}"
+          fi

@@ -1,5 +1,9 @@
-$ErrorActionPreference = "Stop"
+param(
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration = "Debug"
+)
 
+$ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $sourceRoot = Join-Path $projectRoot ".poly\bun-src"
 $pythonSource = Join-Path $projectRoot "crates\poly-python"
@@ -55,22 +59,56 @@ if ($LASTEXITCODE -eq 0) {
 
 Push-Location $sourceRoot
 try {
-    # RustPython 0.5.0 expects the 0.9 malachite family. pymath 0.2 uses a
-    # deliberately broad "0" requirement, so a large workspace may otherwise
-    # select incompatible 0.9 and 0.10 BigInt types at the same time.
-    cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
     if ($IsWindows) {
         . (Join-Path $sourceRoot "scripts\vs-shell.ps1")
     }
-    bun run build
+
+    $profile = $Configuration.ToLowerInvariant()
+    bun install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bun dependency installation failed with exit code $LASTEXITCODE."
+    }
+    bun scripts/build.ts "--profile=$profile" --configure-only
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bun $Configuration configuration failed with exit code $LASTEXITCODE."
+    }
+    ninja -C (Join-Path "build" $profile) clone-lolhtml
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bun lol-html preparation failed with exit code $LASTEXITCODE."
+    }
+
+    # RustPython 0.5.0 expects the 0.9 malachite family. pymath 0.2 uses a
+    # deliberately broad "0" requirement, so a large workspace may otherwise
+    # select incompatible 0.9 and 0.10 BigInt types at the same time. Cargo can
+    # resolve the complete Bun workspace only after clone-lolhtml has run.
+    cargo update -p malachite-bigint@0.10.0 --precise 0.9.1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not unify RustPython's malachite dependency."
+    }
+
+    if ($Configuration -eq "Release") {
+        bun run build:release
+    } else {
+        bun run build
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bun $Configuration build failed with exit code $LASTEXITCODE."
+    }
 } finally {
     Pop-Location
 }
 
-$binaryCandidates = @(
-    (Join-Path $sourceRoot "build\debug\bun-debug.exe"),
-    (Join-Path $sourceRoot "build\debug\bun-debug")
-)
+$binaryCandidates = if ($Configuration -eq "Release") {
+    @(
+        (Join-Path $sourceRoot "build\release\bun.exe"),
+        (Join-Path $sourceRoot "build\release\bun")
+    )
+} else {
+    @(
+        (Join-Path $sourceRoot "build\debug\bun-debug.exe"),
+        (Join-Path $sourceRoot "build\debug\bun-debug")
+    )
+}
 $binary = $binaryCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $binary) {
     throw "Bun build completed but build/debug/bun-debug was not found."
@@ -83,4 +121,4 @@ $destination = if ($IsWindows) {
     Join-Path $distRoot "poly"
 }
 Copy-Item -LiteralPath $binary -Destination $destination -Force
-Write-Host "Built in-process polyglot runtime: $destination"
+Write-Host "Built in-process polyglot runtime ($Configuration): $destination"

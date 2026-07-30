@@ -92,9 +92,12 @@ const result = await python.call("./math_tools.py", "add", [20, 22]);
 - `CI` 在 push、PR 与 merge queue 上运行 Linux、macOS、Windows 三平台
   RustPython bridge 测试，并检查格式、Clippy、TypeScript bundle、同进程
   边界和 Bun 补丁适用性。
-- `Bun integration build` 仅手动触发。它按照 Bun 上游工具链约束完整构建
-  Linux x64 下游可执行文件，然后运行 Python 入口和 TS→Python smoke test。
-  完整构建较重，因此暂不放入每次提交的必跑路径。
+- `Bun integration build` 在相关 PR 或手动触发时，按照 Bun 上游工具链
+  约束完整构建 Windows x64 与 Linux x64 Release 可执行文件，然后运行
+  Python 入口和 TS→Python smoke test。
+- `Release` 只接受 `v*` tag，在两平台构建与 smoke test 全部成功后打包
+  `zip`/`tar.gz`、生成 `BUILDINFO.json` 与 `SHA256SUMS`，最后创建 GitHub
+  Release。任一平台失败都不会发布。
 
 ## 许可证
 
