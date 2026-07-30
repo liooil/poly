@@ -71,6 +71,7 @@ jobs:
             cmake \
             curl \
             golang \
+            libffi-dev \
             libtool \
             lld-${LLVM_VERSION_MAJOR} \
             llvm-${LLVM_VERSION_MAJOR} \

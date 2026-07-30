@@ -241,3 +241,32 @@ index b1424354..7b949ce8 100644
                              continue;
                          }
                          return r;
+diff --git a/scripts/build/bun.ts b/scripts/build/bun.ts
+index be8aa5a2..74685d8c 100644
+--- a/scripts/build/bun.ts
++++ b/scripts/build/bun.ts
+@@ -65,7 +65,10 @@ function systemLibs(cfg: Config): string[] {
+       // (compiler-rt builtins). -llog for __android_log_*.
+       libs.push("-lc", "-lm", "-llog");
+     } else {
+-      libs.push("-lc", "-lpthread", "-ldl");
++      // RustPython's `_ctypes` module uses the system libffi. Cargo records
++      // that native dependency, but Bun links Rust through a static archive,
++      // so the final C++ link must carry the library explicitly.
++      libs.push("-lc", "-lpthread", "-ldl", "-lffi");
+       // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
+       // The static path needs to be the actual file path for lld to find it;
+       // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
+diff --git a/src/jsc/bindings/windows/rescle.cpp b/src/jsc/bindings/windows/rescle.cpp
+index a3171b4e..1eb7b316 100644
+--- a/src/jsc/bindings/windows/rescle.cpp
++++ b/src/jsc/bindings/windows/rescle.cpp
+@@ -112,7 +112,7 @@ inline T round(T value, int modula = 4)
+ std::wstring ReadFileToString(const wchar_t* filename)
+ {
+     std::wifstream wif(filename);
+-    wif.imbue(std::locale(std::locale::empty(), new std::codecvt_utf8<wchar_t>));
++    wif.imbue(std::locale(std::locale::classic(), new std::codecvt_utf8<wchar_t>));
+     std::wstringstream wss;
+     wss << wif.rdbuf();
+     return wss.str();
