@@ -108,16 +108,16 @@ value 和明确的生命周期语义取代这个底层接口。
 | 能力 | 状态 |
 |---|---|
 | Bun 与 RustPython 源码集成 | 已实现 |
-| `.js` / `.ts` 与 `.py` 入口分派 | 已在下游补丁实现；完整构建验证进行中 |
-| TypeScript → Python JSON bridge | Rust bridge 测试已通过；下游 JSC smoke test 进行中 |
+| `.js` / `.ts` 与 `.py` 入口分派 | 已通过 Windows Release 完整构建验证 |
+| TypeScript → Python JSON bridge | 已通过实际链接的 JSC 与 RustPython runtime 验证 |
 | Python 模块缓存与 reload 语义 | 计划中 |
 | 静态跨语言 import 与 callable proxy | 计划中 |
 | 协作式异步执行 | 计划中 |
 | 带 uv 兼容性检查的 `poly sync` | 计划中 |
 | 生成独立应用的 `poly build` | 计划中 |
 
-准确的已验证边界见[验证记录](docs/validation.md)，后续计划见
-[实施路线图](docs/roadmap.md)。
+准确的已验证边界见[验证记录](poly/docs/validation.md)，后续计划见
+[实施路线图](poly/docs/roadmap.md)。
 
 ## 体验当前原型
 
@@ -130,73 +130,86 @@ cargo test -p poly_python
 ```
 
 该测试会在一个调用者线程中初始化 RustPython，调用
-`examples/math_tools.py::add(20, 22)`，检查返回值并验证 stdout 捕获。
+`poly/examples/math_tools.py::add(20, 22)`，检查返回值并验证 stdout 捕获。
 它不会生成最终的 `poly` 可执行文件。
 
 ### 构建完整运行时
 
-完整构建会拉取固定的 Bun 源码、应用 Poly 集成补丁并编译下游可执行文件。
-预计需要约 10 GB 磁盘空间和 10–30 分钟。
+完整构建直接编译当前 fork。仓库本身已经包含 Bun 的源码和历史，构建时
+不会再拉取另一份 Bun 工作树，也不会应用下游 patch。预计需要约 10 GB
+磁盘空间和 10–30 分钟。
 
 前置条件包括 Git、PowerShell 7、Bun 1.3.2、Rust，以及 Bun 所需的原生
 构建工具链。完整的 Windows 和 Linux 环境可参考
 [Bun integration 工作流](.github/workflows/bun-integration.yml)。
 
-Poly 固定使用 Bun 提交
+这个 fork 从 Bun 提交
 [`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)，
-因为 `bun_runtime` 和 `bun_bin` 仍是内部实现，而不是稳定的 embedding API。
+开始建立，后续上游更新通过显式 merge commit 同步。
 
 #### Windows
 
 ```powershell
-.\scripts\bootstrap-bun.ps1 -Configuration Release
-.\dist\poly.exe examples\python_main.py -- first second
-.\dist\poly.exe examples\main.ts
+.\poly\scripts\build.ps1 -Configuration Release
+.\dist\poly.exe poly\examples\python_main.py -- first second
+.\dist\poly.exe poly\examples\main.ts
 ```
 
 #### Linux
 
 ```bash
-pwsh ./scripts/bootstrap-bun.ps1 -Configuration Release
-./dist/poly examples/python_main.py -- first second
-./dist/poly examples/main.ts
+pwsh ./poly/scripts/build.ps1 -Configuration Release
+./dist/poly poly/examples/python_main.py -- first second
+./dist/poly poly/examples/main.ts
 ```
 
 省略 `-Configuration Release` 时默认构建 Debug 版本。
 
-当前 TypeScript 示例仍通过 [`examples/main.ts`](examples/main.ts) 使用
+当前 TypeScript 示例仍通过 [`poly/examples/main.ts`](poly/examples/main.ts) 使用
 过渡性的底层 SDK。它是集成验证入口，不是计划中的最终开发体验。
 
 ## 仓库结构
 
 ```text
-crates/poly-python/            RustPython 嵌入与调用桥
-patches/bun-in-process.patch   对固定 Bun 提交的集成补丁
-scripts/bootstrap-bun.ps1      拉取、打补丁并构建运行时
-sdk/typescript/poly.ts         过渡性的底层 TypeScript SDK
-examples/                      TypeScript 与 Python 集成示例
-docs/                          技术方案、路线图和验证记录
-poly.toml                      未来的 Poly 项目清单
-upstream.toml                  固定的 Bun 上游来源
+src/                           Bun runtime 与 Poly 直接集成源码
+src/poly_python/               RustPython 嵌入与调用桥
+poly/scripts/build.ps1         fork 的直接构建入口
+poly/sdk/                      过渡性的底层 TypeScript SDK
+poly/examples/                 TypeScript 与 Python 集成示例
+poly/docs/                     技术方案、路线图和验证记录
+poly/poly.toml                 未来的 Poly 项目清单
 ```
+
+## 同步 Bun 上游
+
+克隆本仓库后，可以把 Bun 配置为 upstream remote 并正常合并：
+
+```bash
+git remote add upstream https://github.com/oven-sh/bun.git
+git fetch upstream
+git merge upstream/main
+```
+
+第一次 unrelated-history merge 已经进入 `main`；后续同步不再需要
+`--allow-unrelated-histories`，也不会重新生成 Poly patch。
 
 ## 文档
 
-- [技术方案](docs/technical-design.md)
-- [实施路线图](docs/roadmap.md)
-- [验证记录](docs/validation.md)
-- [可复现构建与二进制发布方案](docs/release-build.md)
+- [技术方案](poly/docs/technical-design.md)
+- [实施路线图](poly/docs/roadmap.md)
+- [验证记录](poly/docs/validation.md)
+- [可复现构建与二进制发布方案](poly/docs/release-build.md)
 
 ## 项目网站
 
 项目网站发布在 [liooil.github.io/poly](https://liooil.github.io/poly/)，
-源文件位于 [`website/`](website/)。`main` 分支中的网站改动会通过
+源文件位于 [`poly/website/`](poly/website/)。`main` 分支中的网站改动会通过
 [GitHub Pages 工作流](.github/workflows/pages.yml)自动部署。
 
 ## 持续集成与发布
 
 - `CI` 在 Linux、macOS 和 Windows 上运行 RustPython bridge 测试，并检查
-  格式、Clippy、TypeScript 集成样例、无子进程边界和补丁适用性。
+  格式、Clippy、TypeScript 集成样例、无子进程边界和直接源码集成。
 - `Bun integration build` 在相关 PR 或手动触发时构建 Windows x64 与
   Linux x64 可执行文件，然后验证两种语言的入口和
   TypeScript → Python 调用链。

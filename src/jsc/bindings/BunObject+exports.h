@@ -65,6 +65,7 @@
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \
+    macro(polyPythonCall) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \

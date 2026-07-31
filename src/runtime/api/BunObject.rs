@@ -290,6 +290,7 @@ pub mod bun_object {
         BunObject_callback_mmap => super::mmap_file,
         BunObject_callback_nanoseconds => super::nanoseconds,
         BunObject_callback_openInEditor => super::open_in_editor,
+        BunObject_callback_polyPythonCall => super::poly_python_call,
         BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
         BunObject_callback_resolveSync => super::resolve_sync,
@@ -386,6 +387,34 @@ pub mod bun_object {
 
 fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
     crate::api::cron::get_cron_object(global_this, obj)
+}
+
+#[bun_jsc::host_fn]
+fn poly_python_call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [request_value] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() < 1 {
+        return Err(global_this.throw_not_enough_arguments("polyPythonCall", 1, 0));
+    }
+    if !request_value.is_string() {
+        return Err(global_this.throw_invalid_argument_type(
+            "polyPythonCall",
+            "requestJson",
+            "string",
+        ));
+    }
+
+    let request = request_value.to_bun_string(global_this)?;
+    let request_utf8 = request.to_utf8();
+    let request_json = std::str::from_utf8(request_utf8.slice()).map_err(|error| {
+        global_this.throw_invalid_arguments(format_args!(
+            "polyPythonCall request must be valid UTF-8: {error}"
+        ))
+    })?.to_owned();
+    let response = poly_python::call_json(&request_json).map_err(|error| {
+        global_this.throw(format_args!("in-process RustPython call failed: {error}"))
+    })?;
+
+    BunString::clone_utf8(response.as_bytes()).to_js(global_this)
 }
 
 #[bun_jsc::host_fn]

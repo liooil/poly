@@ -6,12 +6,12 @@ on:
       - ".github/workflows/bun-integration.yml"
       - ".github/workflows/release.yml"
       - "Cargo.lock"
-      - "crates/**"
-      - "examples/**"
-      - "patches/**"
+      - "Cargo.toml"
+      - "bun.lock"
+      - "package.json"
+      - "poly/**"
       - "scripts/**"
-      - "sdk/**"
-      - "upstream.toml"
+      - "src/**"
   workflow_call:
   workflow_dispatch:
 
@@ -87,7 +87,7 @@ jobs:
       - name: Install Windows build dependencies
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/setup-bun-windows-ci.ps1
+        run: ./poly/scripts/setup-bun-windows-ci.ps1
 
       - name: Install Bun's Rust toolchain
         shell: bash
@@ -95,9 +95,9 @@ jobs:
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           rustup override set "$RUSTUP_TOOLCHAIN"
 
-      - name: Build the downstream Bun executable
+      - name: Build Poly from the fork source tree
         shell: pwsh
-        run: ./scripts/bootstrap-bun.ps1 -Configuration Release
+        run: ./poly/scripts/build.ps1 -Configuration Release
 
       - name: Upload executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -124,7 +124,7 @@ jobs:
         shell: pwsh
         run: |
           $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
-          & $poly examples/python_main.py -- workflow
+          & $poly poly/examples/python_main.py -- workflow
           if ($LASTEXITCODE -ne 0) {
               throw "Direct Python smoke test failed with exit code $LASTEXITCODE."
           }
@@ -135,7 +135,7 @@ jobs:
           POLY_TRACE: "1"
         run: |
           $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
-          & $poly examples/js_smoke.ts
+          & $poly poly/examples/js_smoke.ts
           if ($LASTEXITCODE -ne 0) {
               throw "JavaScript smoke test failed with exit code $LASTEXITCODE."
           }
@@ -146,7 +146,7 @@ jobs:
           POLY_TRACE: "1"
         run: |
           $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
-          & $poly examples/main.ts
+          & $poly poly/examples/main.ts
           if ($LASTEXITCODE -ne 0) {
               throw "TypeScript to Python smoke test failed with exit code $LASTEXITCODE."
           }

@@ -24,7 +24,7 @@ GitHub Actions Artifacts 仅用于工作流步骤之间传递中间产物和诊�
 每次发布必须由形如 `v0.1.0` 的 Git tag 触发，并固定以下输入：
 
 - 本项目 Git commit；
-- `upstream.toml` 中 Bun 的完整 commit SHA；
+- 当前 Git 历史中最近一次同步的 Bun upstream commit；
 - Bun 所固定的 WebKit/JavaScriptCore 版本；
 - `Cargo.lock`、`bun.lock` 和将来的 `uv.lock`；
 - Rust 工具链版本和各平台构建工具版本；
@@ -42,7 +42,7 @@ GitHub Actions Artifacts 仅用于工作流步骤之间传递中间产物和诊�
 
 - Rust 格式与静态检查；
 - `poly-python` 单元测试和 interop 测试；
-- Bun 补丁 apply/reverse-apply 检查；
+- RustPython crate 与 Bun/JSC host bridge 的直接源码集成检查；
 - lockfile 未被构建过程修改的检查；
 - 第三方许可证和 SBOM 生成检查。
 
@@ -83,8 +83,8 @@ poly-relink-vX.Y.Z.tar.zst     # LGPL 重新链接所需材料（如单独提供
 ```
 
 不能只依赖 GitHub 自动生成的 Source ZIP：它可能不包含子模块、外部
-依赖源码或构建时应用的补丁。源码包或重建脚本必须能取得精确的 Bun、
-WebKit 和 RustPython 版本，并包含本项目的全部修改。
+依赖源码。源码包或重建脚本必须包含当前 fork 中精确的 Bun 源码、
+WebKit 来源信息、RustPython 版本和本项目的全部修改。
 
 ### 4. 构建元数据
 
@@ -94,7 +94,7 @@ WebKit 和 RustPython 版本，并包含本项目的全部修改。
 {
   "version": "0.1.0",
   "source_commit": "<full-sha>",
-  "bun_commit": "<full-sha>",
+  "bun_baseline": "<full-sha>",
   "webkit_revision": "<exact-revision>",
   "rust_toolchain": "<exact-version>",
   "target": "<target-triple>",
@@ -152,11 +152,10 @@ https://github.com/<owner>/<repo>/releases/latest/download/poly-windows-x64.zip
 由于 Bun 静态链接 JavaScriptCore/WebKit 等 LGPL 组件，构建透明并不
 自动完成所有发行义务。每次 Release 还必须提供一条实际可执行的路径：
 
-1. 获取本项目 tag 和 `upstream.toml` 固定的 Bun commit；
-2. 获取 Bun 固定并打补丁的 WebKit 源码；
-3. 应用 `patches/bun-in-process.patch` 及该版本的其他补丁；
-4. 修改 LGPL 组件；
-5. 使用公开构建脚本重新构建并产生替换后的 `poly` 二进制。
+1. 获取本项目 tag；该 tag 已包含 Bun 源码和 Poly 修改；
+2. 按该源码树记录的 revision 获取 WebKit 等 source-backed 依赖；
+3. 修改 LGPL 组件；
+4. 使用 `poly/scripts/build.ps1` 重新构建并产生替换后的 `poly` 二进制。
 
 在首次公开发布前，需要用一台干净的受支持构建机实际走通
 `RELINKING.md`。如果仅有完整源码仍不足以让用户替换 LGPL 组件，则发布
