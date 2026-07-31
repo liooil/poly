@@ -32,7 +32,7 @@ diff --git a/src/bun_bin/lib.rs b/src/bun_bin/lib.rs
 index ba12490..d76d844 100644
 --- a/src/bun_bin/lib.rs
 +++ b/src/bun_bin/lib.rs
-@@ -200,6 +200,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
+@@ -200,6 +200,20 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
      output::stdio::init();
      let _flush = output::flush_guard();
  
@@ -42,12 +42,18 @@ index ba12490..d76d844 100644
 +
 +    // Initialize RustPython before JSC starts. Bun release builds abort on
 +    // Rust panics, so VM creation must not happen inside a JSC host callback.
++    if std::env::var_os("POLY_TRACE").is_some() {
++        eprintln!("[poly trace] Bun main is pre-initializing RustPython");
++    }
 +    poly_python::initialize();
++    if std::env::var_os("POLY_TRACE").is_some() {
++        eprintln!("[poly trace] Bun main pre-initialized RustPython");
++    }
 +
      // 5. Per-thread stack-limit cache for the JS recursion guard.
      StackCheck::configure_thread();
      bun_io::ParentDeathWatchdog::install();
-@@ -209,3 +217,28 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
+@@ -209,3 +223,28 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
      // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
      Global::exit(0)
  }
@@ -124,12 +130,16 @@ index 58fbdfb..92a7229 100644
          BunObject_callback_registerMacro => super::register_macro,
          BunObject_callback_resolve => super::resolve,
          BunObject_callback_resolveSync => super::resolve_sync,
-@@ -388,6 +389,34 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
+@@ -388,6 +389,48 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
      crate::api::cron::get_cron_object(global_this, obj)
  }
  
 +#[bun_jsc::host_fn]
 +fn poly_python_call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
++    let trace = std::env::var_os("POLY_TRACE").is_some();
++    if trace {
++        eprintln!("[poly trace] entered Bun.polyPythonCall host callback");
++    }
 +    let [request_value] = callframe.arguments_as_array::<1>();
 +    if callframe.arguments_count() < 1 {
 +        return Err(global_this.throw_not_enough_arguments("polyPythonCall", 1, 0));
@@ -149,11 +159,21 @@ index 58fbdfb..92a7229 100644
 +            "polyPythonCall request must be valid UTF-8: {error}"
 +        ))
 +    })?;
++    if trace {
++        eprintln!("[poly trace] decoded Bun.polyPythonCall request");
++    }
 +    let response = poly_python::call_json(request_json).map_err(|error| {
 +        global_this.throw(format_args!("in-process RustPython call failed: {error}"))
 +    })?;
++    if trace {
++        eprintln!("[poly trace] RustPython returned to Bun.polyPythonCall");
++    }
 +
-+    BunString::clone_utf8(response.as_bytes()).to_js(global_this)
++    let result = BunString::clone_utf8(response.as_bytes()).to_js(global_this);
++    if trace {
++        eprintln!("[poly trace] encoded Bun.polyPythonCall response");
++    }
++    result
 +}
 +
  #[bun_jsc::host_fn]
