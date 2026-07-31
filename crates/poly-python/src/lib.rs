@@ -215,11 +215,22 @@ fn validate_request(request: &PythonCallRequest) -> Result<(), PythonError> {
 }
 
 fn normalize_request(mut request: PythonCallRequest) -> Result<PythonCallRequest, PythonError> {
-    request.module = Path::new(&request.module)
-        .canonicalize()
-        .map_err(|error| PythonError::new(format!("cannot resolve module path: {error}")))?
-        .to_string_lossy()
-        .into_owned();
+    let module = Path::new(&request.module);
+    // On Unix, `Path::canonicalize` obtains a `realpath(NULL)` buffer from
+    // libc. The final Bun executable routes Rust allocations through mimalloc,
+    // so freeing that libc-owned buffer crosses allocators and can crash.
+    // A lexical absolute path is sufficient because the bridge normalizes it
+    // again with Python's `os.path.abspath`.
+    let absolute = if module.is_absolute() {
+        module.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| {
+                PythonError::new(format!("cannot resolve the current directory: {error}"))
+            })?
+            .join(module)
+    };
+    request.module = absolute.to_string_lossy().into_owned();
     Ok(request)
 }
 
@@ -234,10 +245,29 @@ fn render_exception(vm: &VirtualMachine, exception: &PyBaseExceptionRef) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::embedded_settings;
+    use std::path::Path;
+
+    use super::{PythonCallRequest, embedded_settings, normalize_request};
 
     #[test]
     fn embedded_runtime_preserves_host_signal_handlers() {
         assert!(!embedded_settings().install_signal_handlers);
+    }
+
+    #[test]
+    fn request_normalization_avoids_allocator_crossing_canonicalization() {
+        let request = PythonCallRequest {
+            module: Path::new("relative")
+                .join("module.py")
+                .to_string_lossy()
+                .into_owned(),
+            function: "main".to_owned(),
+            args: Vec::new(),
+        };
+
+        let normalized = normalize_request(request).unwrap();
+        let module = Path::new(&normalized.module);
+        assert!(module.is_absolute());
+        assert!(module.ends_with(Path::new("relative").join("module.py")));
     }
 }
