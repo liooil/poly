@@ -464,7 +464,7 @@ impl Stdio {
                 )));
             }
 
-            if file_fd >= i32::MAX as _ {
+            if file_fd >= i32::MAX {
                 let mut formatter = jsc::console_object::Formatter::new(global);
                 // `defer formatter.deinit()` — handled by Drop.
                 return Err(global.throw_invalid_arguments(format_args!(

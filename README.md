@@ -116,16 +116,16 @@ tagged values, and explicit lifetime semantics.
 | Capability | Status |
 |---|---|
 | Bun and RustPython source integration | Implemented |
-| `.js` / `.ts` and `.py` entry-point routing | Implemented in the downstream patch; full-build validation in progress |
-| TypeScript → Python JSON bridge | Rust bridge tests pass; downstream JSC smoke test in progress |
+| `.js` / `.ts` and `.py` entry-point routing | Validated in a Windows Release build |
+| TypeScript → Python JSON bridge | Validated through the linked JSC and RustPython runtimes |
 | Python module cache and reload semantics | Planned |
 | Static cross-language imports and callable proxies | Planned |
 | Cooperative async execution | Planned |
 | `poly sync` with uv compatibility checks | Planned |
 | `poly build` standalone applications | Planned |
 
-See the [validation record](docs/validation.md) for the exact verified boundary
-and the [roadmap](docs/roadmap.md) for planned work.
+See the [validation record](poly/docs/validation.md) for the exact verified
+boundary and the [roadmap](poly/docs/roadmap.md) for planned work.
 
 ## Try the current prototype
 
@@ -138,66 +138,79 @@ cargo test -p poly_python
 ```
 
 It initializes RustPython on one caller thread, invokes
-`examples/math_tools.py::add(20, 22)`, verifies the return value, and checks
-stdout capture. It does not produce the final `poly` executable.
+`poly/examples/math_tools.py::add(20, 22)`, verifies the return value, and
+checks stdout capture. It does not produce the final `poly` executable.
 
 ### Build the complete runtime
 
-A full build fetches the pinned Bun source, applies the Poly integration patch,
-and compiles the downstream executable. Expect roughly 10 GB of disk usage and
-a 10–30 minute build.
+A full build compiles the checked-out fork directly. The repository already
+contains Bun's source and history; the build does not clone another Bun
+worktree or apply a downstream patch. Expect roughly 10 GB of disk usage and a
+10–30 minute build.
 
 Prerequisites include Git, PowerShell 7, Bun 1.3.2, Rust, and Bun's native build
 toolchain. See the
 [Bun integration workflow](.github/workflows/bun-integration.yml) for the
 complete Windows and Linux environments.
 
-Poly pins Bun to commit
+The fork was established from Bun commit
 [`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)
-because `bun_runtime` and `bun_bin` are internal implementations rather than
-stable embedding APIs.
+and receives later upstream changes through explicit merge commits.
 
 #### Windows
 
 ```powershell
-.\scripts\bootstrap-bun.ps1 -Configuration Release
-.\dist\poly.exe examples\python_main.py -- first second
-.\dist\poly.exe examples\main.ts
+.\poly\scripts\build.ps1 -Configuration Release
+.\dist\poly.exe poly\examples\python_main.py -- first second
+.\dist\poly.exe poly\examples\main.ts
 ```
 
 #### Linux
 
 ```bash
-pwsh ./scripts/bootstrap-bun.ps1 -Configuration Release
-./dist/poly examples/python_main.py -- first second
-./dist/poly examples/main.ts
+pwsh ./poly/scripts/build.ps1 -Configuration Release
+./dist/poly poly/examples/python_main.py -- first second
+./dist/poly poly/examples/main.ts
 ```
 
 Omitting `-Configuration Release` produces a Debug build.
 
 The TypeScript example currently uses the transitional low-level SDK in
-[`examples/main.ts`](examples/main.ts). It is an integration fixture, not the
-intended final developer experience.
+[`poly/examples/main.ts`](poly/examples/main.ts). It is an integration fixture,
+not the intended final developer experience.
 
 ## Repository layout
 
 ```text
-crates/poly-python/            RustPython embedding and call bridge
-patches/bun-in-process.patch   Integration patch for the pinned Bun commit
-scripts/bootstrap-bun.ps1      Fetch, patch, and build the runtime
-sdk/typescript/poly.ts         Transitional low-level TypeScript SDK
-examples/                      TypeScript and Python integration examples
-docs/                          Design, roadmap, and validation records
-poly.toml                      Future Poly project manifest
-upstream.toml                  Pinned Bun upstream source
+src/                           Bun runtime plus the in-tree Poly integration
+src/poly_python/               RustPython embedding and call bridge
+poly/scripts/build.ps1         Direct fork build entry point
+poly/sdk/                      Transitional low-level TypeScript SDK
+poly/examples/                 TypeScript and Python integration examples
+poly/docs/                     Design, roadmap, and validation records
+poly/poly.toml                 Future Poly project manifest
 ```
+
+## Sync Bun upstream
+
+Clones of this repository can configure Bun as the upstream remote and merge it
+normally:
+
+```bash
+git remote add upstream https://github.com/oven-sh/bun.git
+git fetch upstream
+git merge upstream/main
+```
+
+The first unrelated-history merge is already part of `main`; future syncs do
+not use `--allow-unrelated-histories` and do not regenerate a Poly patch.
 
 ## Documentation
 
-- [Technical design](docs/technical-design.md)
-- [Implementation roadmap](docs/roadmap.md)
-- [Validation record](docs/validation.md)
-- [Reproducible build and binary release plan](docs/release-build.md)
+- [Technical design](poly/docs/technical-design.md)
+- [Implementation roadmap](poly/docs/roadmap.md)
+- [Validation record](poly/docs/validation.md)
+- [Reproducible build and binary release plan](poly/docs/release-build.md)
 
 The linked design documents are currently written in Chinese.
 
@@ -205,14 +218,14 @@ The linked design documents are currently written in Chinese.
 
 The project website is published at
 [liooil.github.io/poly](https://liooil.github.io/poly/). Its source lives in
-[`website/`](website/), and changes on `main` are deployed through the
+[`poly/website/`](poly/website/), and changes on `main` are deployed through the
 [GitHub Pages workflow](.github/workflows/pages.yml).
 
 ## Continuous integration and releases
 
 - `CI` runs the RustPython bridge tests on Linux, macOS, and Windows. It also
   checks formatting, Clippy, the TypeScript fixture, the no-subprocess boundary,
-  and patch applicability.
+  and direct source integration.
 - `Bun integration build` builds Windows x64 and Linux x64 executables for
   relevant pull requests or manual runs, then exercises both language entry
   points and the TypeScript-to-Python path.

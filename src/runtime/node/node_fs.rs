@@ -1528,7 +1528,7 @@ mod _async_tasks {
             'brk: {
                 match result {
                     Err(ref err) => {
-                        if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
+                        if err.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
                             break 'brk;
                         }
                         parent.finish_concurrently(result);
@@ -1902,7 +1902,7 @@ mod _async_tasks {
                         &this.args,
                     );
                     if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
+                        if e.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
                             this.finish_concurrently(Ok(()));
                             return;
                         }
@@ -1941,7 +1941,7 @@ mod _async_tasks {
                         &this.args,
                     );
                     if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
+                        if e.errno == E::EEXIST as u16 && !args.flags.error_on_exist {
                             this.on_copy(src, dest);
                             this.finish_concurrently(Ok(()));
                             return;
@@ -8391,7 +8391,7 @@ impl NodeFS {
                     args,
                 );
                 if let Err(ref e) = r {
-                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
+                    if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
                         return Ok(());
                     }
                 }
@@ -8420,7 +8420,7 @@ impl NodeFS {
                     args,
                 );
                 if let Err(ref e) = r {
-                    if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
+                    if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
                         return Ok(());
                     }
                 }
@@ -8548,7 +8548,7 @@ impl NodeFS {
                         args,
                     );
                     if let Err(ref e) = r {
-                        if e.errno == E::EEXIST as _ && !cp_flags.error_on_exist {
+                        if e.errno == E::EEXIST as u16 && !cp_flags.error_on_exist {
                             continue;
                         }
                         return r;

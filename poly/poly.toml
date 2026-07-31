@@ -3,8 +3,8 @@ name = "polyglot-runtime-example"
 version = "0.1.0"
 
 [entrypoints]
-typescript = "examples/main.ts"
-python = "examples/python_main.py"
+typescript = "poly/examples/main.ts"
+python = "poly/examples/python_main.py"
 
 [runtimes]
 bun_mode = "in-process-fork"

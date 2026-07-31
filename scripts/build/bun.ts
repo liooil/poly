@@ -65,7 +65,10 @@ function systemLibs(cfg: Config): string[] {
       // (compiler-rt builtins). -llog for __android_log_*.
       libs.push("-lc", "-lm", "-llog");
     } else {
-      libs.push("-lc", "-lpthread", "-ldl");
+      // RustPython's `_ctypes` module uses the system libffi. Cargo records
+      // that native dependency, but Bun links Rust through a static archive,
+      // so the final C++ link must carry the library explicitly.
+      libs.push("-lc", "-lpthread", "-ldl", "-lffi");
       // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
       // The static path needs to be the actual file path for lld to find it;
       // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
@@ -108,6 +111,7 @@ function systemLibs(cfg: Config): string[] {
       "userenv.lib",
       "dbghelp.lib",
       "crypt32.lib",
+      "propsys.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release

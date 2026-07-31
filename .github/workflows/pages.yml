@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "website/**"
+      - "poly/website/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -38,7 +38,7 @@ jobs:
       - name: Upload website
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          path: website
+          path: poly/website
 
       - name: Deploy
         id: deployment

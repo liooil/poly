@@ -13,7 +13,7 @@ fn calls_python_and_returns_structured_json() {
         .spawn(|| {
             let caller_thread = std::thread::current().id();
             let module = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../examples/math_tools.py")
+                .join("tests/fixtures/math_tools.py")
                 .canonicalize()
                 .unwrap();
             let request = PythonCallRequest {

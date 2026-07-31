@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           asset_version="$GITHUB_REF_NAME"
-          bun_commit="$(sed -n 's/^commit = "\(.*\)"/\1/p' upstream.toml)"
+          bun_baseline="e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7"
           mkdir -p packages/linux-x64 packages/windows-x64 release-assets
 
           install -m 0755 artifacts/poly-linux-x64/poly packages/linux-x64/poly
@@ -47,10 +47,10 @@ jobs:
           jq -n \
             --arg version "$version" \
             --arg source_commit "$GITHUB_SHA" \
-            --arg bun_commit "$bun_commit" \
+            --arg bun_baseline "$bun_baseline" \
             --arg target "x86_64-unknown-linux-gnu" \
             --arg workflow "$GITHUB_WORKFLOW" \
-            '{version:$version,source_commit:$source_commit,bun_commit:$bun_commit,target:$target,workflow:$workflow}' \
+            '{version:$version,source_commit:$source_commit,bun_baseline:$bun_baseline,target:$target,workflow:$workflow}' \
             > packages/linux-x64/BUILDINFO.json
 
           install -m 0755 artifacts/poly-windows-x64/poly.exe packages/windows-x64/poly.exe
@@ -58,10 +58,10 @@ jobs:
           jq -n \
             --arg version "$version" \
             --arg source_commit "$GITHUB_SHA" \
-            --arg bun_commit "$bun_commit" \
+            --arg bun_baseline "$bun_baseline" \
             --arg target "x86_64-pc-windows-msvc" \
             --arg workflow "$GITHUB_WORKFLOW" \
-            '{version:$version,source_commit:$source_commit,bun_commit:$bun_commit,target:$target,workflow:$workflow}' \
+            '{version:$version,source_commit:$source_commit,bun_baseline:$bun_baseline,target:$target,workflow:$workflow}' \
             > packages/windows-x64/BUILDINFO.json
 
           tar -C packages/linux-x64 -czf \
