@@ -148,11 +148,11 @@ index 58fbdfb..92a7229 100644
 +        global_this.throw_invalid_arguments(format_args!(
 +            "polyPythonCall request must be valid UTF-8: {error}"
 +        ))
-+    })?;
++    })?.to_owned();
 +    if trace {
-+        eprintln!("[poly trace] decoded Bun.polyPythonCall request");
++        eprintln!("[poly trace] copied Bun.polyPythonCall request");
 +    }
-+    let response = poly_python::call_json(request_json).map_err(|error| {
++    let response = poly_python::call_json(&request_json).map_err(|error| {
 +        global_this.throw(format_args!("in-process RustPython call failed: {error}"))
 +    })?;
 +    if trace {
