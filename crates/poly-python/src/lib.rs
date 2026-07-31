@@ -89,8 +89,11 @@ struct PythonRuntime {
 }
 
 thread_local! {
-    /// The VM is created lazily on the Bun/JSC runtime thread and never leaves it.
-    static RUNTIME: PythonRuntime = PythonRuntime::new();
+    /// The VM is initialized on Bun's main thread before JSC starts and stays
+    /// alive for the process lifetime. Avoiding TLS destruction also prevents
+    /// RustPython cleanup from racing JSC's process-exit teardown.
+    static RUNTIME: &'static PythonRuntime =
+        Box::leak(Box::new(PythonRuntime::new()));
 }
 
 impl PythonRuntime {
@@ -136,6 +139,14 @@ impl PythonRuntime {
 
 pub fn call_json(request_json: &str) -> Result<String, PythonError> {
     RUNTIME.with(|runtime| runtime.call_json(request_json))
+}
+
+/// Initialize the process-lifetime Python VM on the calling thread.
+///
+/// Bun calls this before starting JSC so the first host function invocation
+/// cannot initialize RustPython from inside a non-unwinding FFI callback.
+pub fn initialize() {
+    RUNTIME.with(|_| {});
 }
 
 pub fn run_file(path: &Path, args: &[String]) -> Result<u32, PythonError> {
