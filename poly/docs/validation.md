@@ -28,12 +28,16 @@
   - `poly.exe poly/examples/main.ts` 的 TypeScript → RustPython 调用，返回 `42`。
   - 文件大小 `99,396,096` bytes，SHA-256
     `09D65C1F76EC4A81D027ACB4E6033AC0A96E63D5A80BC325B230BCD37C6761B3`。
+- GitHub Actions CI run `30621951052` 通过：
+  - Windows、Linux、macOS 的 RustPython bridge；
+  - Linux 上的格式和 Clippy 检查；
+  - TypeScript bundle、无子进程边界与直接 fork 集成 contract。
+- GitHub Pages run `30621171683` 成功部署 `poly/website`。
 
 ## 尚待 CI 验证
 
 - Linux x64 完整构建和 smoke test；
-- macOS 上的独立 RustPython bridge 测试；
-- GitHub Release 打包、校验和及 Pages 部署。
+- GitHub Release 打包、校验和与发布。
 
 Windows 首次冷构建约 44 分钟。最终链接有 `LNK4217` 本地符号 imported
 警告，但构建成功，且上述运行测试均通过。
