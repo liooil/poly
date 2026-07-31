@@ -32,7 +32,7 @@ diff --git a/src/bun_bin/lib.rs b/src/bun_bin/lib.rs
 index ba12490..d76d844 100644
 --- a/src/bun_bin/lib.rs
 +++ b/src/bun_bin/lib.rs
-@@ -200,6 +200,10 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
+@@ -200,6 +200,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
      output::stdio::init();
      let _flush = output::flush_guard();
  
@@ -40,10 +40,14 @@ index ba12490..d76d844 100644
 +        return exit_code;
 +    }
 +
++    // Initialize RustPython before JSC starts. Bun release builds abort on
++    // Rust panics, so VM creation must not happen inside a JSC host callback.
++    poly_python::initialize();
++
      // 5. Per-thread stack-limit cache for the JS recursion guard.
      StackCheck::configure_thread();
      bun_io::ParentDeathWatchdog::install();
-@@ -209,3 +213,28 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
+@@ -209,3 +217,28 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
      // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
      Global::exit(0)
  }
