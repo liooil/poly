@@ -98,7 +98,28 @@ jobs:
         shell: pwsh
         run: ./scripts/bootstrap-bun.ps1 -Configuration Release
 
-      - name: Smoke-test direct Python entry and TypeScript to Python
+      - name: Upload executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: poly-${{ matrix.platform }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Configure Windows crash dumps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dumpDir = Join-Path $env:RUNNER_TEMP "poly-crash-dumps"
+          New-Item -ItemType Directory -Force -Path $dumpDir | Out-Null
+          "POLY_CRASH_DUMP_DIR=$dumpDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $werKey = "HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\poly.exe"
+          New-Item -Force -Path $werKey | Out-Null
+          New-ItemProperty -Force -Path $werKey -Name DumpFolder -PropertyType ExpandString -Value $dumpDir | Out-Null
+          New-ItemProperty -Force -Path $werKey -Name DumpType -PropertyType DWord -Value 2 | Out-Null
+
+      - name: Smoke-test direct Python entry
         shell: pwsh
         run: |
           $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
@@ -106,15 +127,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
               throw "Direct Python smoke test failed with exit code $LASTEXITCODE."
           }
+
+      - name: Smoke-test JavaScript runtime
+        shell: pwsh
+        env:
+          POLY_TRACE: "1"
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
+          & $poly examples/js_smoke.ts
+          if ($LASTEXITCODE -ne 0) {
+              throw "JavaScript smoke test failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Smoke-test TypeScript to Python
+        shell: pwsh
+        env:
+          POLY_TRACE: "1"
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
           & $poly examples/main.ts
           if ($LASTEXITCODE -ne 0) {
               throw "TypeScript to Python smoke test failed with exit code $LASTEXITCODE."
           }
 
-      - name: Upload executable
+      - name: Upload Windows crash diagnostics
+        if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: poly-${{ matrix.platform }}
-          path: ${{ matrix.artifact_path }}
-          if-no-files-found: error
+          name: poly-windows-crash-diagnostics
+          path: ${{ env.POLY_CRASH_DUMP_DIR }}
+          if-no-files-found: warn
           retention-days: 7

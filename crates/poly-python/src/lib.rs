@@ -8,6 +8,12 @@ use rustpython::{Interpreter, InterpreterBuilder, InterpreterBuilderExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+fn trace(message: &str) {
+    if std::env::var_os("POLY_TRACE").is_some() {
+        eprintln!("[poly trace] {message}");
+    }
+}
+
 const CALL_BRIDGE: &str = r#"
 import contextlib
 import io
@@ -98,6 +104,7 @@ thread_local! {
 
 impl PythonRuntime {
     fn new() -> Self {
+        trace("initializing RustPython runtime");
         let mut settings = Settings::default();
         settings.argv = vec!["<poly-python>".to_owned()];
         settings.write_bytecode = false;
@@ -107,10 +114,12 @@ impl PythonRuntime {
             .init_stdlib()
             .interpreter();
 
+        trace("RustPython runtime initialized");
         Self { interpreter }
     }
 
     fn call_json(&self, request_json: &str) -> Result<String, PythonError> {
+        trace("decoding JS to Python request");
         let request: PythonCallRequest = serde_json::from_str(request_json)
             .map_err(|error| PythonError::new(format!("invalid call request: {error}")))?;
         validate_request(&request)?;
@@ -118,7 +127,8 @@ impl PythonRuntime {
         let normalized_json = serde_json::to_string(&normalized)
             .map_err(|error| PythonError::new(format!("cannot encode call request: {error}")))?;
 
-        self.interpreter.enter(|vm| {
+        trace("entering RustPython interpreter");
+        let result = self.interpreter.enter(|vm| {
             let result = (|| {
                 let scope = vm.new_scope_with_main()?;
                 scope
@@ -133,12 +143,17 @@ impl PythonRuntime {
             })();
 
             result.map_err(|exception| PythonError::new(render_exception(vm, &exception)))
-        })
+        });
+        trace("left RustPython interpreter");
+        result
     }
 }
 
 pub fn call_json(request_json: &str) -> Result<String, PythonError> {
-    RUNTIME.with(|runtime| runtime.call_json(request_json))
+    trace("dispatching JS to Python call");
+    let result = RUNTIME.with(|runtime| runtime.call_json(request_json));
+    trace("completed JS to Python call");
+    result
 }
 
 /// Initialize the process-lifetime Python VM on the calling thread.
@@ -146,7 +161,9 @@ pub fn call_json(request_json: &str) -> Result<String, PythonError> {
 /// Bun calls this before starting JSC so the first host function invocation
 /// cannot initialize RustPython from inside a non-unwinding FFI callback.
 pub fn initialize() {
+    trace("pre-initializing RustPython runtime");
     RUNTIME.with(|_| {});
+    trace("pre-initialized RustPython runtime");
 }
 
 pub fn run_file(path: &Path, args: &[String]) -> Result<u32, PythonError> {
