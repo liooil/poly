@@ -6,6 +6,8 @@
 
 - Poly `main` 通过双亲 merge commit 保留原 Poly 历史，并接入 Bun
   `e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7` 的完整历史。
+- 随后使用普通 merge（不再使用 `--allow-unrelated-histories`）同步到 Bun
+  upstream `cbe3e18a769f446222d5b8009b5a76943153d1ba`。
 - `cargo fmt -p poly_python -- --check`
 - `cargo test -p poly_python`
   - 在一个调用者线程中初始化 RustPython；
@@ -24,6 +26,8 @@
   - Python 入口 `poly.exe poly/examples/python_main.py -- first second`；
   - JavaScript 入口 `poly.exe poly/examples/js_smoke.ts`；
   - `poly.exe poly/examples/main.ts` 的 TypeScript → RustPython 调用，返回 `42`。
+  - 文件大小 `99,396,096` bytes，SHA-256
+    `09D65C1F76EC4A81D027ACB4E6033AC0A96E63D5A80BC325B230BCD37C6761B3`。
 
 ## 尚待 CI 验证
 

@@ -94,7 +94,7 @@ WebKit 来源信息、RustPython 版本和本项目的全部修改。
 {
   "version": "0.1.0",
   "source_commit": "<full-sha>",
-  "bun_baseline": "<full-sha>",
+  "bun_upstream": "<full-sha>",
   "webkit_revision": "<exact-revision>",
   "rust_toolchain": "<exact-version>",
   "target": "<target-triple>",
