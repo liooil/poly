@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use poly_python::{PythonCallRequest, call_json, initialize};
+use poly_python::{PythonCallRequest, call_json};
 use serde_json::{Value, json};
 
 #[test]
@@ -12,8 +12,6 @@ fn calls_python_and_returns_structured_json() {
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
             let caller_thread = std::thread::current().id();
-            initialize();
-            initialize();
             let module = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/math_tools.py")
                 .canonicalize()
