@@ -66,8 +66,14 @@ jobs:
         shell: pwsh
         run: |
           $target = Join-Path $env:RUNNER_TEMP "poly-python"
-          Copy-Item src/poly_python $target -Recurse
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item src/poly_python/Cargo.toml $target
+          Copy-Item src/poly_python/src $target -Recurse
+          Copy-Item src/poly_python/tests $target -Recurse
           Copy-Item Cargo.lock (Join-Path $target "Cargo.lock")
+          if (-not (Test-Path (Join-Path $target "Cargo.toml"))) {
+            throw "The isolated bridge crate was not copied correctly."
+          }
           "POLY_PYTHON_CHECKOUT=$target" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Check formatting
