@@ -41,7 +41,8 @@ jobs:
             os: ubuntu-24.04
             artifact_path: dist/poly
           - platform: windows-x64
-            os: windows-2025
+            # The pinned Bun/WebKit toolchain targets the VS 2022 MSVC ABI.
+            os: windows-2022
             artifact_path: dist/poly.exe
 
     steps:
