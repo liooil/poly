@@ -72,14 +72,17 @@ jobs:
 
       - name: Check formatting
         if: runner.os == 'Linux'
-        run: cargo fmt --manifest-path "$POLY_PYTHON_CHECKOUT/Cargo.toml" -- --check
+        shell: pwsh
+        run: cargo fmt --manifest-path "$env:POLY_PYTHON_CHECKOUT/Cargo.toml" -- --check
 
       - name: Run Clippy
         if: runner.os == 'Linux'
-        run: cargo clippy --manifest-path "$POLY_PYTHON_CHECKOUT/Cargo.toml" --all-targets -- -D warnings
+        shell: pwsh
+        run: cargo clippy --manifest-path "$env:POLY_PYTHON_CHECKOUT/Cargo.toml" --all-targets -- -D warnings
 
       - name: Run bridge tests
-        run: cargo test --manifest-path "$POLY_PYTHON_CHECKOUT/Cargo.toml"
+        shell: pwsh
+        run: cargo test --manifest-path "$env:POLY_PYTHON_CHECKOUT/Cargo.toml"
 
   bun-contract:
     name: Poly direct-integration contract
