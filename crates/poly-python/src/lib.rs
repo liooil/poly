@@ -105,9 +105,7 @@ thread_local! {
 impl PythonRuntime {
     fn new() -> Self {
         trace("initializing RustPython runtime");
-        let mut settings = Settings::default();
-        settings.argv = vec!["<poly-python>".to_owned()];
-        settings.write_bytecode = false;
+        let settings = embedded_settings();
 
         let interpreter = InterpreterBuilder::new()
             .settings(settings)
@@ -147,6 +145,17 @@ impl PythonRuntime {
         trace("left RustPython interpreter");
         result
     }
+}
+
+fn embedded_settings() -> Settings {
+    let mut settings = Settings::default();
+    settings.argv = vec!["<poly-python>".to_owned()];
+    settings.write_bytecode = false;
+    // RustPython defaults to installing process-wide C signal handlers. Poly
+    // is an embedding host, so Bun/JSC must remain the owner of the process
+    // signal and exception state that it configures during runtime startup.
+    settings.install_signal_handlers = false;
+    settings
 }
 
 pub fn call_json(request_json: &str) -> Result<String, PythonError> {
@@ -230,5 +239,15 @@ fn render_exception(vm: &VirtualMachine, exception: &PyBaseExceptionRef) -> Stri
         "RustPython execution failed".to_owned()
     } else {
         rendered
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::embedded_settings;
+
+    #[test]
+    fn embedded_runtime_preserves_host_signal_handlers() {
+        assert!(!embedded_settings().install_signal_handlers);
     }
 }
