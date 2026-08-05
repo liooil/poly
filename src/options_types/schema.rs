@@ -392,6 +392,7 @@ pub mod api {
         yaml = 19,
         json5 = 20,
         md = 21,
+        py = 22,
     }
 
     impl Loader {

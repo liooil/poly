@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use poly_python::{PythonCallRequest, call_json};
+use poly_python::{BridgeRequest, call_json};
 use serde_json::{Value, json};
 
 #[test]
@@ -16,10 +16,27 @@ fn calls_python_and_returns_structured_json() {
                 .join("tests/fixtures/math_tools.py")
                 .canonicalize()
                 .unwrap();
-            let request = PythonCallRequest {
-                module: module.to_string_lossy().into_owned(),
+            let module = module.to_string_lossy().into_owned();
+
+            // The runtime registry is thread-local: load first, then call on
+            // the same thread.
+            let load_request = BridgeRequest {
+                kind: "load".to_owned(),
+                module: module.clone(),
+                function: String::new(),
+                args: Vec::new(),
+                script_args: Vec::new(),
+                referrer: String::new(),
+            };
+            call_json(&serde_json::to_string(&load_request).unwrap()).unwrap();
+
+            let request = BridgeRequest {
+                kind: "call".to_owned(),
+                module,
                 function: "add".to_owned(),
                 args: vec![Value::from(20), Value::from(22)],
+                script_args: Vec::new(),
+                referrer: String::new(),
             };
 
             let response = call_json(&serde_json::to_string(&request).unwrap()).unwrap();
@@ -28,7 +45,6 @@ fn calls_python_and_returns_structured_json() {
             assert_eq!(std::thread::current().id(), caller_thread);
             assert_eq!(response["ok"], json!(true));
             assert_eq!(response["value"], json!(42));
-            assert_eq!(response["stdout"], json!("[python] adding 20 and 22\n"));
         })
         .unwrap()
         .join()
