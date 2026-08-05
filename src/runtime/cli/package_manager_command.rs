@@ -137,7 +137,7 @@ impl PackageManagerCommand {
         // use <bar> to emphasize 'bar'
 
         const INTRO_TEXT: &str = "\n\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
+<b>Usage<r>: <b><green>poly pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
 \n\
   Run package manager utilities.";
 
@@ -145,39 +145,39 @@ impl PackageManagerCommand {
 \n\
 <b>Commands:<r>\n\
 \n\
-  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities\n\
-  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace\n\
+  <b><green>poly pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities\n\
+  <b><green>poly pm<r> <blue>pack<r>                 create a tarball of the current workspace\n\
   <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk\n\
   <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in\n\
   <d>├<r> <cyan>--filename<r>                the name of the tarball\n\
   <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts\n\
   <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)\n\
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
-  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
+  <b><green>poly pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
-  <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
-  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
-  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
-  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
+  <b><green>poly pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <b><green>poly pm<r> <blue>whoami<r>               print the current npm username\n\
+  <b><green>poly pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
+  <b><green>poly pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
   <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
-  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\
+  <b><green>poly pm<r> <blue>pkg<r>                  manage data in package.json\n\
   <d>├<r> <cyan>get<r> <d>[key ...]<r>\n\
   <d>├<r> <cyan>set<r> <d>key=value ...<r>\n\
   <d>├<r> <cyan>delete<r> <d>key ...<r>\n\
   <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors\n\
-  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile\n\
-  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile\n\
-  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
-  <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder\n\
-  <b><green>bun pm<r> <blue>cache rm<r>             clear the cache\n\
-  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
-  <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
-  <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
+  <b><green>poly pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile\n\
+  <b><green>poly pm<r> <blue>hash-string<r>          print the string used to hash the lockfile\n\
+  <b><green>poly pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
+  <b><green>poly pm<r> <blue>cache<r>                print the path to the cache folder\n\
+  <b><green>poly pm<r> <blue>cache rm<r>             clear the cache\n\
+  <b><green>poly pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
+  <b><green>poly pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
+  <b><green>poly pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
   <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
-  <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
+  <b><green>poly pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 

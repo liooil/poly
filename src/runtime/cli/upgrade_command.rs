@@ -590,7 +590,7 @@ impl UpgradeCommand {
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
                     bun_core::pretty_errorln!(
-                        "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
+                        "<r><green>Congrats!<r> You're already on the latest version of Poly <d>(which is v{})<r>",
                         bstr::BStr::new(&version.name().unwrap())
                     );
                     Global::exit(0);
@@ -702,14 +702,14 @@ impl UpgradeCommand {
 
             if bytes.is_empty() {
                 bun_core::pretty_errorln!(
-                    "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
+                    "<r><red>error:<r> Failed to download the latest version of Poly. Received empty content"
                 );
                 Global::exit(1);
             }
 
             if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
                 bun_core::pretty_errorln!(
-                    "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
+                    "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>poly upgrade<r> again to retry the download",
                     bstr::BStr::new(&zip_url_bytes)
                 );
                 Global::exit(1);
@@ -1072,7 +1072,7 @@ impl UpgradeCommand {
                         let _ = save_dir_.delete_tree(&version_name);
 
                         bun_core::pretty_errorln!(
-                            "<r><red>error<r>: The downloaded version of Bun (<red>{}<r>) doesn't match the expected version (<b>{}<r>)<r>. Cancelled upgrade",
+                            "<r><red>error<r>: The downloaded version of Poly (<red>{}<r>) doesn't match the expected version (<b>{}<r>)<r>. Cancelled upgrade",
                             bstr::BStr::new(&version_string[..version_string.len().min(512)]),
                             bstr::BStr::new(&version_name)
                         );
@@ -1137,7 +1137,7 @@ impl UpgradeCommand {
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
                     bun_core::pretty_errorln!(
-                        "<r><red>error:<r> Failed to open Bun's install directory {}",
+                        "<r><red>error:<r> Failed to open Poly's install directory {}",
                         bstr::BStr::new(err.name())
                     );
                     Global::exit(1);
@@ -1225,7 +1225,7 @@ impl UpgradeCommand {
                     if target_hash == source_hash {
                         let _ = save_dir_.delete_tree(&version_name);
                         bun_core::pretty_errorln!(
-                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
+                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Poly\n\nTo downgrade to the latest stable release, run <b><cyan>poly upgrade --stable<r>\n"
                         );
                         Global::exit(0);
                     }
@@ -1289,14 +1289,14 @@ impl UpgradeCommand {
                         .is_err()
                         {
                             Output::err_generic(
-                                "Failed to move new version of Bun to {} due to {}",
+                                "Failed to move new version of Poly to {} due to {}",
                                 (
                                     bstr::BStr::new(destination_executable),
                                     bstr::BStr::new(err.name()),
                                 ),
                             );
                             Output::err_generic(
-                                "Failed to restore the working copy of Bun. The installation is now corrupt.\n\nPlease reinstall Bun manually with the following command:\n   {}\n",
+                                "Failed to restore the working copy of Poly. The installation is now corrupt.\n\nPlease reinstall Poly manually with the following command:\n   {}\n",
                                 (Self::MANUAL_UPGRADE_COMMAND,),
                             );
                             Global::exit(1);
@@ -1304,7 +1304,7 @@ impl UpgradeCommand {
                     }
 
                     Output::err_generic(
-                        "Failed to move new version of Bun to {} to {}\n\nPlease reinstall Bun manually with the following command:\n   {}\n",
+                        "Failed to move new version of Poly to {} to {}\n\nPlease reinstall Poly manually with the following command:\n   {}\n",
                         (
                             bstr::BStr::new(destination_executable),
                             bstr::BStr::new(err.name()),

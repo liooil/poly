@@ -481,11 +481,11 @@ pub const os_display: &str = if cfg!(target_os = "android") {
     env::OS.display_string()
 };
 
-// Bun v1.0.0 (Linux x64)
-// Bun v1.0.0-debug (Linux x64)
-// Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
+// Poly v0.1.0 (Linux x64)
+// Poly v0.1.0-debug (Linux x64)
+// Poly v0.1.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string: &str = concatcp!(
-    "Bun v",
+    "Poly v",
     if env::IS_CANARY {
         package_json_version_with_revision
     } else {

@@ -955,12 +955,12 @@ fn print_enhanced_audit_report(
 
             prettyln!("");
             prettyln!("To update all dependencies to the latest compatible versions:");
-            prettyln!("  <green>bun update<r>");
+            prettyln!("  <green>poly update<r>");
             prettyln!("");
             prettyln!(
                 "To update all dependencies to the latest versions (including breaking changes):"
             );
-            prettyln!("  <green>bun update --latest<r>");
+            prettyln!("  <green>poly update --latest<r>");
             prettyln!("");
         }
 
