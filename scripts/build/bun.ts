@@ -112,6 +112,7 @@ function systemLibs(cfg: Config): string[] {
       "dbghelp.lib",
       "crypt32.lib",
       "propsys.lib",
+      "gdi32.lib", // clipboard-win (GetDIBits/CreateDIBitmap)
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
