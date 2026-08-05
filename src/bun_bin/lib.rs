@@ -200,9 +200,10 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     output::stdio::init();
     let _flush = output::flush_guard();
 
-    if let Some(exit_code) = run_python_entrypoint() {
-        return exit_code;
-    }
+    // Note: `.py` entrypoints are no longer dispatched here (before the JSC
+    // VM exists — that would break Python->JS `js.import_module()`). The
+    // runtime transpiler detects the main `.py` file and synthesizes a
+    // bootstrap module that calls `run_file` inside the live VM.
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
@@ -214,27 +215,4 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     Global::exit(0)
 }
 
-fn run_python_entrypoint() -> Option<c_int> {
-    let mut args = std::env::args_os().skip(1);
-    let first = args.next()?;
-    let (entry, script_args) = if first == "run" {
-        (args.next()?, args)
-    } else {
-        (first, args)
-    };
-    let path = std::path::PathBuf::from(entry);
-    if path.extension().and_then(|extension| extension.to_str()) != Some("py") {
-        return None;
-    }
 
-    let script_args: Vec<String> = script_args
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect();
-    Some(match poly_python::run_file(&path, &script_args) {
-        Ok(exit_code) => exit_code as c_int,
-        Err(error) => {
-            eprintln!("poly: {error}");
-            1
-        }
-    })
-}
