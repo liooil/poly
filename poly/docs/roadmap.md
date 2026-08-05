@@ -311,6 +311,73 @@ crate 仍被标为内部接口，以及 Nushell 自己的值系统、REPL、配�
 [`nu-cli` REPL](https://docs.rs/nu-cli/latest/nu_cli/fn.evaluate_repl.html) 和
 [plugin protocol](https://www.nushell.sh/contributor-book/plugins.html)。
 
+### Rust-native Haskell-like JIT runtime：长期研发候选
+
+这条路线不是在 Poly 中嵌入 GHC，也不是用 Rust 重写一个兼容 GHC、Hackage 和
+全部语言扩展的实现。目标是从零设计一门 embedding-first 的 Haskell-like 惰性
+函数式语言：compiler、GC 和 runtime 以 Rust 实现，源码在 Poly 进程内编译为
+本机机器码，并从第一天使用 `PolyValue` ABI 和统一 REPL。它不经过子进程、GHC
+RTS 或 Wasm/WASI。
+
+在兼容边界和正式名称确定前，不占用 `.hs` 扩展名，也不宣称 Haskell 兼容；
+以下入口使用 `poly repl hs-like` 作为路线图占位名。
+
+#### 语言与语义边界
+
+- [ ] 实现 layout-aware parser、renamer、module/import 和可保留 source span 的 Core IR
+- [ ] 先支持 lambda、application、`let`、`letrec`、algebraic data type 和
+      pattern matching
+- [ ] 实现 Hindley–Milner 类型推断、parametric polymorphism 和明确的诊断格式
+- [ ] 用 thunk、closure、update、sharing 和 blackhole 定义 call-by-need 语义
+- [ ] 定义 integer、float、boolean、char、text、bytes、list、tuple 和 record 基线
+- [ ] `IO` 只能经 Poly host capability 访问 filesystem、network、clock、random
+      和 process，不另建一套不受控系统 API
+- [ ] 把 typeclass、higher-rank type、GADT、type family、STM、async exception 和
+      Template Haskell 留在独立晋升门后，不阻塞最小语言闭环
+- [ ] 明确不兼容 GHC ABI、`.hi`、GHC package database 和现有 Hackage binary
+
+#### 惰性 runtime 与本机 JIT
+
+- [ ] 建立可执行语义的 Core interpreter，作为测试 oracle 而不是正式性能后端
+- [ ] 使用 Cranelift 将 Core function 在 Poly 进程内增量编译为本机机器码
+- [ ] 让 REPL expression、加载的 module 和递归 closure 都走 native code，并提供
+      可验证的 JIT event/trace，禁止静默退回 interpreter
+- [ ] 建立 thunk heap、closure layout、constructor tag、indirection 和 update frame
+- [ ] 第一阶段使用 non-moving heap 或 stable handle，避免向 JIT 暴露可移动裸指针
+- [ ] 定义 GC root、safepoint、stack map、write barrier、finalizer 和跨 runtime
+      引用环处理
+- [ ] 建立 executable memory、code cache、symbol resolution、失效、回收和 W^X 策略
+- [ ] 在 baseline JIT 稳定后再评估 hot counter、specialization、guard、deoptimization
+      和 interpreter-to-JIT tiering
+- [ ] 在 Windows x64、Linux x64 和后续 Native Profile 平台验证 JIT 与 GC conformance
+
+#### Poly interop 与 REPL
+
+- [ ] 定义 lazy value 穿过 `PolyValue` 边界时的 force 规则和显式 thunk handle
+- [ ] 映射 algebraic data、list、record、multiple-result、closure 和 typed callable
+- [ ] JS、Python、Lua 可调用编译后的函数，hs-like code 也可调用同进程 callable
+- [ ] 统一 exception、bottom、取消、安全重入、Promise/coroutine 和 `IO` 调度语义
+- [ ] `poly repl hs-like` 持久保存 module、binding、type environment 和 JIT code cache
+- [ ] REPL 支持 multiline、补全、history、自动打印 inferred type、`:type`、中断和
+      native-code 状态检查
+- [ ] 单文件 bundle 收集源码、Core/cache metadata 和资源；是否携带机器码由
+      reproducibility 与目标平台策略决定
+
+#### 原型与晋升门
+
+- [ ] 跑通 `letrec + lazy list + pattern matching` → Cranelift native code →
+      调用 JS function → 返回 `PolyValue` 的同进程端到端原型
+- [ ] 用 differential/property tests 对照 Core interpreter 与 JIT 的值、异常和求值顺序
+- [ ] 测量 REPL 编译延迟、代码体积、启动时间、峰值内存、GC pause 和跨语言开销
+- [ ] fuzz parser、type checker、Core lowering、GC handle 和 JIT/native ABI 边界
+- [ ] 只有上述闭环在至少 Windows x64 与 Linux x64 稳定后，才进入第三语言实施顺序
+
+研究基线参考 [Lambdachine](https://github.com/nominolo/lambdachine)、
+[Gluon](https://github.com/gluon-lang/gluon)、
+[HVM2](https://github.com/HigherOrderCO/HVM2)、
+[Bend](https://github.com/HigherOrderCO/Bend) 和
+[Cranelift](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift)。
+
 ## Wasm / WASI：复用 Bun 与 JavaScriptCore 的现有引擎
 
 这条路线把 Wasm 视为可由多种语言生成的执行格式和模块后端，而不是第三门
