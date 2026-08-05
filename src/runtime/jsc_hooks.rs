@@ -41,6 +41,7 @@ use bun_jsc::{
 
 use bun_ast::ImportKind;
 use bun_ast::Loader;
+use bun_jsc::StringJsc as _;
 use bun_bundler::entry_points::ServerEntryPoint;
 use bun_bundler::options::{self, ModuleType};
 use bun_resolve_builtins::Module as HardcodedModule;
@@ -357,6 +358,10 @@ unsafe fn init_runtime_state(
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
+    // v1 polyglot: install the Python->JS host callback for this thread
+    // (thread-local; torn down in `deinit_runtime_state`).
+    poly_python::set_host_callback(poly_host_callback);
+
     // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
     // `FakeTimers::CurrentTime::{set,clear}` write that storage so timers
     // scheduled under `jest.useFakeTimers()` use the mocked epoch.
@@ -611,6 +616,7 @@ unsafe fn configure_debugger(
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
 /// this thread (or null), and must not be used again after this call.
 unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+    poly_python::clear_host_callback();
     RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
     // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
     // copy in `transpile_file` / `transpile_virtual_module`; without this
@@ -2112,7 +2118,7 @@ fn transpile_source_code_inner(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
+                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc | L::Py
             ))
     {
         return Ok(OwnedResolvedSource::from(ResolvedSource {
@@ -3290,6 +3296,79 @@ fn transpile_source_code_inner(
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // .py — v1 polyglot interop: describe the Python module and
+        // synthesize ESM (JSON constants + callable wrappers).
+        // ────────────────────────────────────────────────────────────────────
+        L::Py => {
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            if global_object.is_null() {
+                return Err(crate::Error::NotSupported);
+            }
+            // SAFETY: null-checked above; `global_object` is the live
+            // per-thread global.
+            let global = unsafe { &*global_object };
+            let module_path = String::from_utf8_lossy(path.text).into_owned();
+
+            // A `.py` *entrypoint* (run as `poly app.py`) becomes a bootstrap
+            // module that executes the script inside the live VM via
+            // `run_file` — so `js.import_module()` works from Python and
+            // sys.argv / exit codes stay compatible. Non-entry imports get
+            // the synthesized ESM exports below.
+            let hash = bun_watcher::Watcher::get_hash(path.text);
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
+            let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+            if is_main {
+                let module_json = serde_json::to_string(&module_path).unwrap_or_else(|_| "\"\"".into());
+                let bootstrap = format!(
+                    "const __resp = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"run_file\", module: {module_json}, script_args: process.argv.slice(2)}})));\n\
+                     if (!__resp.ok) {{ console.error(__resp.error ?? \"Python script failed\"); process.exit(1); }}\n\
+                     process.exit(__resp.value ?? 0);\n"
+                );
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    source_code: bun_core::String::clone_utf8(bootstrap.as_bytes()),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::Esm,
+                    ..Default::default()
+                }));
+            }
+
+            let exports = match poly_python::describe_module(&module_path)
+                .map_err(|e| e.message().to_string())
+                .and_then(|json| {
+                    serde_json::from_str::<poly_python::BridgeResponse>(&json)
+                        .map_err(|e| format!("invalid python describe response: {e}"))
+                        .and_then(|resp| {
+                            resp.exports.ok_or_else(|| {
+                                format!(
+                                    "python describe failed: {}",
+                                    resp.error.unwrap_or_else(|| "unknown error".into())
+                                )
+                            })
+                        })
+                }) {
+                Ok(exports) => exports,
+                Err(message) => {
+                    return Err(global
+                        .throw_type_error(format_args!(
+                            "cannot import Python module: {message}"
+                        ))
+                        .into());
+                }
+            };
+
+            let source_code = python_module_esm_source(&module_path, &exports);
+            return Ok(OwnedResolvedSource::from(ResolvedSource {
+                source_code,
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                tag: ResolvedSourceTag::Esm,
+                ..Default::default()
+            }));
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {
@@ -3523,6 +3602,233 @@ export const db = new Database(import.meta.path);
 export const __esModule = true;
 export default db;
 ";
+
+// ════════════════════════════════════════════════════════════════════════
+// v1 polyglot host callback (Python -> JS direction)
+// ════════════════════════════════════════════════════════════════════════
+
+/// Read + clear the pending JS exception and return its message.
+fn poly_exception_message(global: &JSGlobalObject) -> String {
+    bun_jsc::top_scope!(scope, global);
+    if let Some(exc) = scope.exception() {
+        // Clear the pending exception BEFORE running any JS (toString /
+        // property access on the exception value), so the conversions run in
+        // a clean VM state.
+        scope.clear_exception();
+        let rendered = PolyExceptionToString(global, exc.as_ptr());
+        if rendered.is_empty() {
+            return "unknown JS exception".to_string();
+        }
+        let message = rendered
+            .to_bun_string(global)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "unknown JS exception".to_string());
+        return message;
+    }
+    "unknown JS exception".to_string()
+}
+
+/// Resolve a Python->JS import specifier against the importing `.py` file.
+/// v1 supports absolute paths, `file://` URLs and paths relative to the
+/// referrer; bare package specifiers are rejected (not yet implemented).
+/// Lexically normalize a path (resolve `.` / `..` segments).
+fn poly_normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Resolve a Python->JS import specifier against the importing `.py` file.
+/// v1 supports absolute paths, `file://` URLs and paths relative to the
+/// referrer; bare package specifiers are rejected (not yet implemented).
+fn poly_resolve_specifier(module: &str, referrer: &str) -> Result<String, String> {
+    use std::path::Path;
+    if module.is_empty() {
+        return Err("empty module specifier".into());
+    }
+    if let Some(rest) = module.strip_prefix("file://") {
+        return Ok(poly_normalize_path(Path::new(rest)).to_string_lossy().into_owned());
+    }
+    let path = Path::new(module);
+    if path.is_absolute() {
+        return Ok(poly_normalize_path(path).to_string_lossy().into_owned());
+    }
+    if !referrer.is_empty() {
+        if let Some(dir) = Path::new(referrer).parent() {
+            return Ok(poly_normalize_path(&dir.join(module))
+                .to_string_lossy()
+                .into_owned());
+        }
+    }
+    Err(format!(
+        "bare package specifier {module:?} is not supported by v1 Python->JS imports (use a path)"
+    ))
+}
+
+/// Synchronously load + evaluate a module and wait for its completion.
+fn poly_load_module_sync(
+    vm: &mut VirtualMachine,
+    key: &bun_core::String,
+) -> Result<(), String> {
+    let promise = JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(key)).ok_or_else(|| {
+        let global = vm.global();
+        poly_exception_message(global)
+    })?;
+    let promise_ptr = promise.as_ptr();
+    bun_jsc::JSInternalPromise::opaque_mut(promise_ptr).set_handled();
+    vm.wait_for_promise(bun_jsc::AnyPromise::Internal(promise_ptr));
+    match bun_jsc::JSInternalPromise::opaque_mut(promise_ptr).unwrap(
+        vm.jsc_vm_mut(),
+        bun_jsc::js_promise::UnwrapMode::MarkHandled,
+    ) {
+        bun_jsc::js_promise::Unwrapped::Fulfilled(_) => Ok(()),
+        bun_jsc::js_promise::Unwrapped::Rejected(err) => {
+            let global = vm.global();
+            Err(format!(
+                "JS module evaluation failed: {}",
+                err.to_bun_string(global)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| "unknown error".to_string())
+            ))
+        }
+        bun_jsc::js_promise::Unwrapped::Pending => Err(
+            "JS module did not evaluate synchronously (top-level await is not supported in v1)"
+                .to_string(),
+        ),
+    }
+}
+
+fn poly_import_js(resolved: &str) -> Result<String, String> {
+    let vm = VirtualMachine::get_mut();
+    let key = bun_core::String::clone_utf8(resolved.as_bytes());
+    poly_load_module_sync(vm, &key)?;
+
+    let global = vm.global();
+    let key_js = key
+        .to_js(global)
+        .map_err(|e| format!("cannot encode module key: {e:?}"))?;
+    let exports = PolyGetModuleExportsJson(global, key_js);
+    if exports.is_empty() {
+        return Err(poly_exception_message(global));
+    }
+    let mut out = bun_core::String::empty();
+    exports
+        .json_stringify(global, 0, &mut out)
+        .map_err(|e| format!("cannot stringify module exports: {e:?}"))?;
+    Ok(out.to_string())
+}
+
+fn poly_call_js(resolved: &str, function: &str, args: &serde_json::Value) -> Result<String, String> {
+    let vm = VirtualMachine::get_mut();
+    let key = bun_core::String::clone_utf8(resolved.as_bytes());
+    poly_load_module_sync(vm, &key)?;
+
+    let global = vm.global();
+    let key_js = key
+        .to_js(global)
+        .map_err(|e| format!("cannot encode module key: {e:?}"))?;
+    let fn_js = bun_core::String::clone_utf8(function.as_bytes())
+        .to_js(global)
+        .map_err(|e| format!("cannot encode function name: {e:?}"))?;
+    let args_json = serde_json::to_string(args).map_err(|e| e.to_string())?;
+    let args_js = bun_core::String::clone_utf8(args_json.as_bytes())
+        .to_js(global)
+        .map_err(|e| format!("cannot encode call args: {e:?}"))?;
+
+    let result = PolyCallJsFunction(global, key_js, fn_js, args_js);
+    if result.is_empty() {
+        return Err(poly_exception_message(global));
+    }
+    let mut out = bun_core::String::empty();
+    result
+        .json_stringify(global, 0, &mut out)
+        .map_err(|e| format!("cannot stringify call result: {e:?}"))?;
+    Ok(out.to_string())
+}
+
+/// The `poly_python::HostCallback` installed by `init_runtime_state`.
+fn poly_host_callback(request_json: &str) -> Result<String, String> {
+    let request: serde_json::Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
+    let kind = request.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+    match kind {
+        "import_js" => {
+            let module = request.get("module").and_then(|v| v.as_str()).unwrap_or("");
+            let referrer = request.get("referrer").and_then(|v| v.as_str()).unwrap_or("");
+            let resolved = poly_resolve_specifier(module, referrer)?;
+            let exports_json = poly_import_js(&resolved)?;
+            Ok(format!(r#"{{"ok":true,"exports":{exports_json}}}"#))
+        }
+        "call_js" => {
+            let module = request.get("module").and_then(|v| v.as_str()).unwrap_or("");
+            let function = request.get("function").and_then(|v| v.as_str()).unwrap_or("");
+            let referrer = request.get("referrer").and_then(|v| v.as_str()).unwrap_or("");
+            let args = request.get("args").cloned().unwrap_or(serde_json::Value::Array(Vec::new()));
+            let resolved = poly_resolve_specifier(module, &referrer)?;
+            let result_json = poly_call_js(&resolved, function, &args)?;
+            Ok(format!(r#"{{"ok":true,"value":{result_json}}}"#))
+        }
+        other => Err(format!("unknown poly host request kind: {other}")),
+    }
+}
+
+unsafe extern "C" {
+    safe fn PolyGetModuleExportsJson(global: &JSGlobalObject, key: JSValue) -> JSValue;
+    safe fn PolyCallJsFunction(
+        global: &JSGlobalObject,
+        key: JSValue,
+        functionName: JSValue,
+        argsJson: JSValue,
+    ) -> JSValue;
+    safe fn PolyExceptionToString(global: &JSGlobalObject, exception: *mut bun_jsc::Exception) -> JSValue;
+}
+
+/// Synthesize ESM source for a `.py` module (v1 interop): JSON constants
+/// become const bindings, callables become wrappers that tunnel through
+/// `Bun.polyPythonCall`. Local identifiers are prefixed so arbitrary Python
+/// export names (including reserved words / unicode) stay valid.
+fn python_module_esm_source(
+    module_path: &str,
+    exports: &poly_python::ModuleExports,
+) -> bun_core::String {
+    let module_json = serde_json::to_string(module_path).unwrap_or_else(|_| "\"\"".into());
+    let mut out = String::with_capacity(512);
+    let mut exported: Vec<String> = Vec::new();
+
+    for (name, value) in &exports.constants {
+        let local = format!("__poly_c_{}", exported.len());
+        let value_json = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
+        out.push_str(&format!("const {local} = {value_json};\n"));
+        exported.push(format!("{local} as {name}"));
+    }
+
+    for name in &exports.callables {
+        let local = format!("__poly_f_{}", exported.len());
+        let name_json = serde_json::to_string(name).unwrap_or_default();
+        out.push_str(&format!(
+            "function {local}(...args) {{\n\
+             const resp = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"call\", module: {module_json}, function: {name_json}, args}})));\n\
+             if (!resp.ok) {{ const err = new Error(resp.error ?? \"Python call failed\"); err.traceback = resp.traceback; err.errorKind = resp.error_kind; throw err; }}\n\
+             return resp.value;\n\
+             }}\n"
+        ));
+        exported.push(format!("{local} as {name}"));
+    }
+
+    if !exported.is_empty() {
+        out.push_str(&format!("export {{ {} }};\n", exported.join(", ")));
+    }
+
+    bun_core::String::clone_utf8(out.as_bytes())
+}
 
 /// `jsSyntheticModule(tag, specifier)` — produce a
 /// `ResolvedSource` whose `tag` indexes into the C++ `InternalModuleRegistry`

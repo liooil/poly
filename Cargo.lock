@@ -1841,6 +1841,7 @@ dependencies = [
  "poly_python",
  "rust-argon2",
  "scopeguard",
+ "serde_json",
  "sha3",
  "strum 0.26.3",
  "thiserror 2.0.18",

@@ -203,15 +203,50 @@ const JS_PACKAGE_SOURCE: &str = r#"
 import sys
 import json
 
+class _JSFunction:
+    """A callable wrapper around a named JS module export (v1: no handles,
+    resolved by module specifier + name on every call)."""
+
+    def __init__(self, module, name, referrer):
+        self._module = module
+        self._name = name
+        self._referrer = referrer
+
+    def __call__(self, *args):
+        _check_host()
+        request = json.dumps({
+            'kind': 'call_js',
+            'module': self._module,
+            'function': self._name,
+            'referrer': self._referrer,
+            'args': list(args),
+        })
+        response_json = globals()['__poly_js_host_call'](request)
+        response = json.loads(response_json)
+        if not response.get('ok', False):
+            raise _js_error(response)
+        return response.get('value') if 'value' in response else None
+
+    def __repr__(self):
+        return f"<js function {self._module}.{self._name}>"
+
+
 class _ModuleWrapper:
     """Wraps a JS module namespace for attribute access."""
 
-    def __init__(self, exports):
-        self._exports = exports
+    def __init__(self, exports, module, referrer):
+        self._module = module
+        self._referrer = referrer
+        values = exports.get('values', {}) if isinstance(exports, dict) else {}
+        functions = exports.get('functions', []) if isinstance(exports, dict) else []
+        self._exports = values
         # Names from the module become direct attributes
-        for name, value in exports.items():
+        for name, value in values.items():
             if value is not None:
                 super().__setattr__(name, value)
+        # Callable exports become callable wrappers
+        for name in functions:
+            super().__setattr__(name, _JSFunction(self._module, name, self._referrer))
 
     def __getattr__(self, name):
         # Delegate to the underlying exports (for names with reserved fn name collisions)
@@ -238,12 +273,12 @@ class _JSRoot:
             'module': specifier,
             'referrer': referrer,
         })
-        response_json = __poly_js_host_call(request)
+        response_json = globals()['__poly_js_host_call'](request)
         response = json.loads(response_json)
         if not response.get('ok', False):
             raise _js_error(response)
         exports = response['exports'] if 'exports' in response else {}
-        return _ModuleWrapper(exports)
+        return _ModuleWrapper(exports, specifier, referrer)
 
     def __getattr__(self, name):
         # js.x.y -> import_module('x/y')
@@ -275,7 +310,7 @@ class JavaScriptError(Exception):
 
 def _check_host():
     """Ensure we are inside a JSC/Bun runtime with a host callback."""
-    if '__poly_js_host_call' not in dir(sys) and '__poly_js_host_call' not in __builtins__:
+    if '__poly_js_host_call' not in globals():
         raise RuntimeError(
             "js.import_module() can only be called from within the Poly/Bun runtime. "
             "No JSC host context is available."
@@ -562,6 +597,11 @@ impl PythonRuntime {
                 JS_PACKAGE_SOURCE,
                 "<poly-js-package>".to_owned(),
             )?;
+            // Make `__file__` available so `js.import_module()` can resolve
+            // relative specifiers against the script's directory.
+            scope
+                .globals
+                .set_item("__file__", vm.new_pyobj(display_path.clone()), vm)?;
             // Run the user script
             vm.run_string(scope, &source, display_path).map(drop)
         });
