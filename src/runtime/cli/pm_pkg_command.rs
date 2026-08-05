@@ -100,14 +100,14 @@ impl PmPkgCommand {
   <cyan>fix<r>                    Auto-correct common package.json errors
 
 <b>Examples<r>:
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>get<r> <blue>name version<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>description="My awesome package"<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>keywords='["test","demo","example"]'<r> <cyan>--json<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>config='{"port":3000,"debug":true}'<r> <cyan>--json<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>scripts.test="bun test"<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>set<r> <blue>bin.mycli=cli.js<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
-  <d>$<r> <b><green>bun pm pkg<r> <cyan>fix<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>get<r> <blue>name version<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>set<r> <blue>description="My awesome package"<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>set<r> <blue>keywords='["test","demo","example"]'<r> <cyan>--json<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>set<r> <blue>config='{"port":3000,"debug":true}'<r> <cyan>--json<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>set<r> <blue>scripts.test="poly test"<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>set<r> <blue>bin.mycli=cli.js<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
+  <d>$<r> <b><green>poly pm pkg<r> <cyan>fix<r>
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
 "#;

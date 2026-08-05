@@ -178,12 +178,12 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
     parse_param!("--import <STR>...                 Alias of --preload, for Node.js compatibility"),
-    parse_param!("--inspect <STR>?                  Activate Bun's debugger"),
+    parse_param!("--inspect <STR>?                  Activate Poly's debugger"),
     parse_param!(
-        "--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing"
+        "--inspect-wait <STR>?             Activate Poly's debugger, wait for a connection before executing"
     ),
     parse_param!(
-        "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
+        "--inspect-brk <STR>?              Activate Poly's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
@@ -309,7 +309,7 @@ const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
     parse_param!(
-        "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
+        "-b, --bun                         Force a script or package to use Poly's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
         "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
@@ -1479,10 +1479,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Output::flush();
             bun_core::pretty!(
-                "Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n"
+                "Usage:\n  <d>$<r> <b><green>poly build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n"
             );
             bun_core::pretty!(
-                "\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n"
+                "\nTo see full documentation:\n  <d>$<r> <b><green>poly build<r> --help\n"
             );
             Output::flush();
             Global::exit(1);
@@ -1863,7 +1863,7 @@ fn parse_build_command_options(
     if args.flag(b"--app") {
         if !FeatureFlags::bake() {
             Output::err_generic(
-                "To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"",
+                "To use the experimental \"--app\" option, upgrade to the canary build of Poly via \"poly upgrade --canary\"",
                 (),
             );
             Global::crash();

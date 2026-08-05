@@ -631,19 +631,19 @@ pub mod help_command {
         ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
             $printer!(
                 concat!($prefix, "\
-<b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
+<b>Usage:<r> <b>poly \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
 
 <b>Commands:<r>
-  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
+  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a JavaScript or Python file
             <d>lint<r>                 Run a package.json script
-  <b><magenta>test<r>                           Run unit tests with Bun
-  <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
-  <b><magenta>repl<r>                           Start a REPL session with Bun
-  <b><magenta>exec<r>                           Run a shell script directly with Bun
+  <b><magenta>test<r>                           Run unit tests
+  <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(polyx)<r>
+  <b><magenta>repl<r>                           Start a REPL session
+  <b><magenta>exec<r>                           Run a shell script directly
 
-  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
-  <b><blue>add<r>       <d>{:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
-  <b><blue>remove<r>    <d>{:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
+  <b><blue>install<r>                        Install dependencies for a package.json <d>(poly i)<r>
+  <b><blue>add<r>       <d>{:<16}<r>     Add a dependency to package.json <d>(poly a)<r>
+  <b><blue>remove<r>    <d>{:<16}<r>     Remove a dependency from package.json <d>(poly rm)<r>
   <b><blue>update<r>    <d>{:<16}<r>     Update outdated dependencies
   <b><blue>audit<r>                          Check installed packages for vulnerabilities
   <b><blue>outdated<r>                       Display latest versions of outdated dependencies
@@ -657,10 +657,15 @@ pub mod help_command {
 
   <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
 
-  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
-  <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
-  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
-  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+  <b><cyan>init<r>                           Start an empty project from a built-in template
+  <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(poly c)<r>
+  <b><cyan>upgrade<r>                        Upgrade to latest version of Poly.
+  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Poly team.
+
+Python (embedded RustPython):
+  <b><magenta>app.py<r>                       Run a Python script directly (same as <b>poly run app.py<r>)
+  <b><magenta>run<r>       <d>./app.py<r>           Python entrypoints run inside the full runtime, so
+                                      Python can import JavaScript modules via js.import_module()
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
 "),
@@ -702,7 +707,7 @@ pub mod help_command {
             Reason::Explicit => {
                 print_cli_helptext!(
                     pretty,
-                    "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({})<r>\n\n",
+                    "<r><b><magenta>Poly<r> is a unified JavaScript and Python runtime, built on Bun with an embedded RustPython interpreter. <d>({})<r>\n\n",
                     args,
                     Global::package_json_version_with_revision
                 );
@@ -710,12 +715,11 @@ pub mod help_command {
                     pretty!("\n<b>Flags:<r>");
                     bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS);
                     pretty!(
-                        "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
+                        "\n\n(more flags in <b>poly install --help<r>, <b>poly test --help<r>, and <b>poly build --help<r>)\n",
                     );
                 }
                 pretty!(
-                    "\nLearn more about Bun:            <magenta>https://bun.com/docs<r>\n\
-Join our Discord community:      <blue>https://bun.com/discord<r>\n"
+                    "\nLearn more about Poly:            <magenta>https://github.com/liooil/poly<r>\n"
                 );
             }
             Reason::InvalidCommand => {
@@ -1965,21 +1969,21 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Tag::BunxCommand => {
                 pretty_errorln!(
                     "\
-<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> [flags and arguments for the package]<r>
+<b>Usage<r>: <b><green>poly x<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> [flags and arguments for the package]<r>
 Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
 
 Flags:
-  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
+  <cyan>--bun<r>                  Force the command to run with Poly instead of Node.js
   <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name
   <cyan>--no-install<r>           Skip installation if package is not already installed
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
 Examples<d>:<r>
-  <b><green>bunx<r> <blue>prisma<r> migrate<r>
-  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
-  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
-  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
+  <b><green>poly x<r> <blue>prisma<r> migrate<r>
+  <b><green>poly x<r> <blue>prettier<r> foo.js<r>
+  <b><green>poly x<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
+  <b><green>poly x<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
 "
                 );
                 Output::flush();
@@ -1989,7 +1993,7 @@ Examples<d>:<r>
                     "\
 <b>Usage<r>:
   Transpile and bundle one or more files.
-  <b><green>bun build<r> <cyan>[flags]<r> <blue>\\<entrypoint\\><r>
+  <b><green>poly build<r> <cyan>[flags]<r> <blue>\\<entrypoint\\><r>
 
 "
                 );
@@ -2001,14 +2005,14 @@ Examples<d>:<r>
                     "\n\n\
 <b>Examples:<r>
   <d>Frontend web apps:<r>
-  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
-  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+  <b><green>poly build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
+  <b><green>poly build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
 
   <d>Bundle code to be run in Bun (reduces server startup time)<r>
-  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
+  <b><green>poly build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
 
   <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
-  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
+  <b><green>poly build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
 
 A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 "
@@ -2018,7 +2022,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
             Tag::TestCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>
+<b>Usage<r>: <b><green>poly test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>
   Run all matching test files and print the results to stdout"
                 );
                 Output::flush();
@@ -2029,13 +2033,13 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                     "\n\n\
 <b>Examples:<r>
   <d>Run all test files<r>
-  <b><green>bun test<r>
+  <b><green>poly test<r>
 
   <d>Run all test files with \"foo\" or \"bar\" in the file name<r>
-  <b><green>bun test<r> <blue>foo bar<r>
+  <b><green>poly test<r> <blue>foo bar<r>
 
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
-  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
+  <b><green>poly test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
@@ -2046,9 +2050,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
                 pretty!(
                     "\
 <b>Usage<r><d>:<r>
-  <b><green>bun create<r> <magenta>\\<MyReactComponent.(jsx|tsx)\\><r>
-  <b><green>bun create<r> <magenta>\\<template\\><r> <cyan>[...flags]<r> <blue>dest<r>
-  <b><green>bun create<r> <magenta>\\<github-org/repo\\><r> <cyan>[...flags]<r> <blue>dest<r>
+  <b><green>poly create<r> <magenta>\\<MyReactComponent.(jsx|tsx)\\><r>
+  <b><green>poly create<r> <magenta>\\<template\\><r> <cyan>[...flags]<r> <blue>dest<r>
+  <b><green>poly create<r> <magenta>\\<github-org/repo\\><r> <cyan>[...flags]<r> <blue>dest<r>
 
 <b>Environment variables<r><d>:<r>
   <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
@@ -2084,22 +2088,22 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
                     } else {
                         (
                             "stable",
-                            "Install the most recent canary version of Bun",
+                            "Install the most recent canary version of Poly",
                             "canary",
                         )
                     };
 
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
-  Upgrade Bun
+<b>Usage<r>: <b><green>poly upgrade<r> <cyan>[flags]<r>
+  Upgrade Poly
 
 <b>Examples:<r>
   <d>Install the latest {} version<r>
-  <b><green>bun upgrade<r>
+  <b><green>poly upgrade<r>
 
   <d>{}<r>
-  <b><green>bun upgrade<r> <cyan>--{}<r>
+  <b><green>poly upgrade<r> <cyan>--{}<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
 ",
@@ -2112,7 +2116,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
             Tag::ReplCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>poly repl<r> <cyan>[flags]<r>
   Open a Bun REPL
 "
                 );
@@ -2121,7 +2125,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
             Tag::ExecCommand => {
                 pretty!(
                     "\
-<b>Usage: bun exec <r><cyan>\\<script\\><r>
+<b>Usage: poly exec <r><cyan>\\<script\\><r>
 
 Execute a shell script directly from Bun.
 
@@ -2135,7 +2139,7 @@ Execute a shell script directly from Bun.
                 Output::flush();
             }
             Tag::GetCompletionsCommand => {
-                pretty!("<b>Usage<r>: <b><green>bun getcompletes<r>");
+                pretty!("<b>Usage<r>: <b><green>poly getcompletes<r>");
                 Output::flush();
             }
             Tag::PatchCommand => {
@@ -2159,20 +2163,20 @@ Execute a shell script directly from Bun.
             Tag::InfoCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
+<b>Usage<r>: <b><green>poly info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
   Display package metadata from the registry.
 
 <b>Examples:<r>
   <d>View basic information about a package<r>
-  <b><green>bun info<r> <blue>react<r>
+  <b><green>poly info<r> <blue>react<r>
 
   <d>View specific version<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
+  <b><green>poly info<r> <blue>react@18.0.0<r>
 
   <d>View specific property<r>
-  <b><green>bun info<r> <blue>react<r> version
-  <b><green>bun info<r> <blue>react<r> dependencies
-  <b><green>bun info<r> <blue>react<r> versions
+  <b><green>poly info<r> <blue>react<r> version
+  <b><green>poly info<r> <blue>react<r> dependencies
+  <b><green>poly info<r> <blue>react<r> versions
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
 "
@@ -2182,7 +2186,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
             Tag::WhyCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
+<b>Usage<r>: <b><green>poly why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
 Explain why a package is installed
 
 <b>Arguments:<r>
@@ -2193,9 +2197,9 @@ Explain why a package is installed
   <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
 
 <b>Examples:<r>
-  <d>$<r> <b><green>bun why<r> <blue>react<r>
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
+  <d>$<r> <b><green>poly why<r> <blue>react<r>
+  <d>$<r> <b><green>poly why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
+  <d>$<r> <b><green>poly why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 "
@@ -2205,7 +2209,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
             Tag::InitCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>
+<b>Usage<r>: <b><green>poly init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>
   Initialize a Bun project in the current directory.
   Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
 
@@ -2218,35 +2222,35 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
       <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
 
 <b>Examples:<r>
-  <b><green>bun init<r>
-  <b><green>bun init<r> <cyan>--yes<r>
-  <b><green>bun init<r> <cyan>--react<r>
-  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
+  <b><green>poly init<r>
+  <b><green>poly init<r> <cyan>--yes<r>
+  <b><green>poly init<r> <cyan>--react<r>
+  <b><green>poly init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
 "
                 );
                 Output::flush();
             }
             Tag::DiscordCommand => {
-                pretty!("<b>Usage<r>: <b><green>bun discord<r>\n  Open Bun's Discord server.\n");
+                pretty!("<b>Usage<r>: <b><green>poly discord<r>\n  Open Poly's Discord server.\n");
                 Output::flush();
             }
             Tag::InstallCompletionsCommand => {
-                pretty!("<b>Usage<r>: <b><green>bun completions<r>\n");
+                pretty!("<b>Usage<r>: <b><green>poly completions<r>\n");
                 Output::flush();
             }
             Tag::PackageManagerCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
+<b>Usage<r>: <b><green>poly pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
   Run package manager utilities.
 
 <b>Commands:<r>
-  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
-  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
-  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
-  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder
-  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache
+  <b><green>poly pm<r> <blue>bin<r>              print the path to bin folder
+  <b><green>poly pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
+  <b><green>poly pm<r> <blue>whoami<r>           print the current npm username
+  <b><green>poly pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
+  <b><green>poly pm<r> <blue>cache<r>            print the path to the cache folder
+  <b><green>poly pm<r> <blue>cache rm<r>         clear the cache
 
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
 "

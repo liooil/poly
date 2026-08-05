@@ -99,19 +99,19 @@ impl RunCommand {
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
         // time. Routing them through a `const &str` + `{}` prints the raw
         // `<b>`/`<r>` tags verbatim.
-        pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
+        pretty!("<b>Usage<r>: <b><green>poly run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
         pretty!(
             "\n\n\
 <b>Examples:<r>
   <d>Run a JavaScript or TypeScript file<r>
-  <b><green>bun run<r> <blue>./index.js<r>
-  <b><green>bun run<r> <blue>./index.tsx<r>
+  <b><green>poly run<r> <blue>./index.js<r>
+  <b><green>poly run<r> <blue>./index.tsx<r>
 
   <d>Run a package.json script<r>
-  <b><green>bun run<r> <blue>dev<r>
-  <b><green>bun run<r> <blue>lint<r>
+  <b><green>poly run<r> <blue>dev<r>
+  <b><green>poly run<r> <blue>lint<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 "
@@ -130,7 +130,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     for (key, value) in scripts.keys().iter().zip(scripts.values().iter()) {
                         prettyln!("\n");
                         prettyln!(
-                            "  <d>$</r> bun run<r> <blue>{}<r>\n",
+                            "  <d>$</r> poly run<r> <blue>{}<r>\n",
                             bstr::BStr::new(key.as_ref())
                         );
                         prettyln!("  <d>  {}<r>\n", bstr::BStr::new(value));

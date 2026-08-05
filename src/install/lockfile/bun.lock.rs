@@ -1648,10 +1648,10 @@ pub(crate) fn parse_into_binary_lockfile(
             Box::new([bun_ast::range_data(
                 None,
                 bun_ast::Range::NONE,
-                b"Run 'bun upgrade' to update to the latest version of Bun",
+                b"Run 'poly upgrade' to update to the latest version of Poly",
             )]),
             format_args!(
-                "Unsupported lockfile version {}. This lockfile was likely created by a newer version of Bun. (This is Bun v{}, which supports lockfile versions up to {}.)",
+                "Unsupported lockfile version {}. This lockfile was likely created by a newer version of Poly. (This is Poly v{}, which supports lockfile versions up to {}.)",
                 lockfile_version_num,
                 bun_core::Global::package_json_version,
                 Version::CURRENT as u32,
