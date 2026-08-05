@@ -1252,6 +1252,12 @@ pub mod parse_worker {
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }
+            // v1 interop does not bundle `.py` modules (see
+            // poly/docs/language-interop-v1.md); Bun.build support is a
+            // later bundle-phase milestone.
+            Loader::Py => {
+                return Err(crate::Error::ParserError);
+            }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
 

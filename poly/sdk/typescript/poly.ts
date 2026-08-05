@@ -4,11 +4,16 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-interface PythonCallResponse {
+interface BridgeResponse {
   ok: boolean;
   value?: JsonValue;
-  stdout?: string;
+  exports?: {
+    names: string[];
+    constants: Record<string, JsonValue>;
+    callables: string[];
+  };
   error?: string;
+  error_kind?: string;
   traceback?: string;
 }
 
@@ -22,30 +27,26 @@ export class PythonCallError extends Error {
   }
 }
 
+function bridge(request: unknown): BridgeResponse {
+  const nativeBun = Bun as typeof Bun & {
+    polyPythonCall(requestJson: string): string;
+  };
+  return JSON.parse(nativeBun.polyPythonCall(JSON.stringify(request))) as BridgeResponse;
+}
+
 async function callPython(
   module: string,
   functionName: string,
   args: JsonValue[] = [],
 ): Promise<JsonValue> {
-  const request = JSON.stringify({
-    module,
-    function: functionName,
-    args,
-  });
-
-  let response: PythonCallResponse;
-  try {
-    const nativeBun = Bun as typeof Bun & {
-      polyPythonCall(requestJson: string): string;
-    };
-    response = JSON.parse(nativeBun.polyPythonCall(request)) as PythonCallResponse;
-  } catch (error) {
-    throw new Error(`In-process Python bridge failed: ${String(error)}`);
+  // The runtime registry keeps modules loaded per process; `load` is
+  // idempotent and must precede `call` (v1 protocol).
+  const load = bridge({ kind: "load", module, function: "", args: [] });
+  if (!load.ok) {
+    throw new PythonCallError(load.error ?? "Python module failed to load", load.traceback);
   }
 
-  if (response.stdout) {
-    process.stdout.write(response.stdout);
-  }
+  const response = bridge({ kind: "call", module, function: functionName, args });
   if (!response.ok) {
     throw new PythonCallError(
       response.error ?? "Python call failed",
