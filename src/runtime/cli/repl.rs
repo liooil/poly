@@ -901,6 +901,16 @@ pub(super) struct Repl<'a> {
     pub(super) vm: Option<&'a VirtualMachine>,
     pub(super) global: Option<&'a JSGlobalObject>,
 
+    // Cross-language shared variables to inject into the Python REPL scope
+    // before the next Python input (functions by name — the name is the
+    // handle; JSON values by value). JavaScript mode discovers them from
+    // globalThis after each evaluation, so Python's globals() and JS's
+    // globalThis stay fused.
+    shared_to_python: Vec<poly_python::SharedExport>,
+    // globalThis property names captured at REPL start; JS-mode extraction
+    // only picks up names added afterwards (user declarations).
+    js_global_snapshot: Vec<String>,
+
     // Special REPL variables
     // Note: bare JSValue fields are safe here because Repl is stack-allocated
     // and values are explicitly protect()/unprotect()'d.
@@ -936,6 +946,8 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
+            shared_to_python: Vec::new(),
+            js_global_snapshot: Vec::new(),
             // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
             // C++-side no-op for non-cell values.
             last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
@@ -1327,7 +1339,10 @@ impl<'a> Repl<'a> {
     /// Returns `true` if the input is incomplete (keep collecting lines).
     fn python_eval_and_print(&mut self, code: &[u8]) -> bool {
         let code_str = String::from_utf8_lossy(code);
-        match poly_python::repl_eval(&code_str) {
+        // Inject the staged JS exports (functions by name as proxies, JSON
+        // values directly) so Python's globals() reflects globalThis.
+        let shared = std::mem::take(&mut self.shared_to_python);
+        match poly_python::repl_eval(&code_str, &shared) {
             Ok(json) => match serde_json::from_str::<poly_python::ReplEvalResult>(&json) {
                 Ok(result) => {
                     if result.incomplete {
@@ -1339,6 +1354,9 @@ impl<'a> Repl<'a> {
                     if let Some(error) = result.error {
                         self.print_error(format_args!("{}\n", error));
                     }
+                    // Fuse Python's scope back into globalThis: functions as
+                    // callable proxies, JSON values directly.
+                    self.sync_python_to_js(result.exports);
                     false
                 }
                 Err(_) => {
@@ -1350,6 +1368,164 @@ impl<'a> Repl<'a> {
                 self.print_error(format_args!("{}\n", e.message()));
                 false
             }
+        }
+    }
+
+    /// Run JS code and return its result as a JSON string (or None on
+    /// exception / non-stringifiable result). Used for the shared-variable
+    /// sync snippets, which are plain expressions (no REPL transform).
+    fn js_run_for_json(&mut self, code: &[u8]) -> Option<String> {
+        let global = self.global?;
+        let vm = self.vm?;
+
+        let mut exception: JSValue = JSValue::UNDEFINED;
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice
+        // ptr/len pairs are valid for the call duration.
+        let result = unsafe {
+            Bun__REPL__evaluate(
+                global,
+                code.as_ptr(),
+                code.len(),
+                b"[repl]".as_ptr(),
+                b"[repl]".len(),
+                &raw mut exception,
+            )
+        };
+        if !exception.is_undefined() && !exception.is_null() {
+            return None;
+        }
+
+        let resolved = if let Some(promise) = result.as_promise() {
+            // SAFETY: `promise` is a live JSC heap cell.
+            jsc::JSPromise::opaque_mut(promise).set_handled();
+            vm.as_mut()
+                .wait_for_promise(jsc::AnyPromise::Normal(promise));
+            match jsc::JSPromise::opaque_mut(promise).status() {
+                PromiseStatus::Fulfilled => {
+                    let jsc_vm_ref = vm.jsc_vm();
+                    jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
+                }
+                _ => return None,
+            }
+        } else {
+            result
+        };
+
+        // String results are returned verbatim (the snippets already produce
+        // JSON text); everything else is JSON.stringify'd.
+        if resolved.is_string() {
+            return resolved.to_bun_string(global).ok().map(|s| s.to_string());
+        }
+        let mut out = bun_core::String::empty();
+        resolved.json_stringify(global, 0, &mut out).ok()?;
+        Some(out.to_string())
+    }
+
+    /// After a JS input is evaluated, discover new globalThis user variables
+    /// (not in the snapshot, not underscore-prefixed) and stage them for
+    /// injection into the Python REPL scope. Functions are staged by name —
+    /// Python's globals() will see callable proxies that resolve by name on
+    /// every call, keeping both namespaces fused.
+    fn sync_js_to_python(&mut self) {
+        let snapshot_json =
+            serde_json::to_string(&self.js_global_snapshot).unwrap_or_else(|_| "[]".into());
+        let code = format!(
+            "(function() {{\n\
+             const snap = new Set({snapshot_json});\n\
+             const values = {{}}; const functions = []; const objects = [];\n\
+             for (const k of Object.keys(globalThis)) {{\n\
+               if (snap.has(k) || k.startsWith('_')) continue;\n\
+               const v = globalThis[k];\n\
+               if (v !== null && typeof v === 'object') {{\n\
+                 if (v.__polyPyVar !== undefined) continue;\n\
+                 objects.push(k);\n\
+               }} else if (typeof v === 'function') {{\n\
+                 if (v.__polyPyVar !== undefined) continue;\n\
+                 functions.push(k);\n\
+               }} else {{\n\
+                 values[k] = v;\n\
+               }}\n\
+             }}\n\
+             return JSON.stringify({{values, functions, objects}});\n\
+             }})()"
+        );
+        let Some(json) = self.js_run_for_json(code.as_bytes()) else {
+            return;
+        };
+        let Ok(serde_json::Value::Object(exports)) = serde_json::from_str(&json) else {
+            return;
+        };
+
+        let mut staged: Vec<poly_python::SharedExport> = Vec::new();
+        if let Some(serde_json::Value::Object(values)) = exports.get("values") {
+            for (name, value) in values {
+                staged.push(poly_python::SharedExport {
+                    name: name.clone(),
+                    kind: "value".to_string(),
+                    value: Some(value.clone()),
+                });
+            }
+        }
+        for (kind, key) in [("function", "functions"), ("object", "objects")] {
+            if let Some(serde_json::Value::Array(names)) = exports.get(key) {
+                for name in names {
+                    if let Some(name) = name.as_str() {
+                        staged.push(poly_python::SharedExport {
+                            name: name.to_string(),
+                            kind: kind.to_string(),
+                            value: None,
+                        });
+                    }
+                }
+            }
+        }
+        if !staged.is_empty() {
+            self.shared_to_python = staged;
+        }
+    }
+
+    /// Inject Python REPL exports into `globalThis` after a Python input:
+    /// JSON values directly, functions as callable proxies (marked with
+    /// __polyPyVar so JS-mode discovery skips them).
+    fn sync_python_to_js(&mut self, exports: Vec<poly_python::ReplExport>) {
+        let mut code = String::from("(function() {\n");
+        for export in exports {
+            let name_json = serde_json::to_string(&export.name).unwrap_or_default();
+            match export.kind.as_str() {
+                "function" => {
+                    code.push_str(&format!(
+                        "globalThis[{name_json}] = function(...args) {{\n\
+                         const r = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"py_call_var\", function: {name_json}, args}})));\n\
+                         if (!r.ok) {{ throw new Error(r.error ?? \"Python call failed\"); }}\n\
+                         return r.value;\n\
+                         }};\n\
+                         globalThis[{name_json}].__polyPyVar = {name_json};\n"
+                    ));
+                }
+                _ => {
+                    if let Some(value) = export.value {
+                        let value_json = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                        code.push_str(&format!("globalThis[{name_json}] = {value_json};\n"));
+                    }
+                }
+            }
+        }
+        code.push_str("})()");
+        let _ = self.js_run_for_json(code.as_bytes());
+    }
+
+    /// Snapshot the globalThis property names at REPL start; JS-mode
+    /// extraction uses this to distinguish user declarations from built-ins.
+    fn snapshot_js_globals(&mut self) {
+        let Some(keys) = self.js_run_for_json(b"JSON.stringify(Object.keys(globalThis))") else {
+            return;
+        };
+
+        if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(&keys) {
+            self.js_global_snapshot = items
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
         }
     }
 
@@ -2077,6 +2253,9 @@ impl<'a> Repl<'a> {
         // Note: defer self.restoreTerminal() — handled in Drop + explicit call at end
 
         self.history.load()?;
+        // Baseline for cross-language variable fusion: remember which
+        // globalThis names existed before any user input.
+        self.snapshot_js_globals();
 
         // Print welcome message
         self.print(format_args!("Welcome to Poly v{}\n", VERSION));
@@ -2356,6 +2535,8 @@ impl<'a> Repl<'a> {
         self.history.add(strings::trim(&code_to_eval, b"\n"))?;
 
         self.evaluate_and_print(&code_to_eval);
+        // Fuse new globalThis user variables into Python's globals().
+        self.sync_js_to_python();
 
         // Reset state
         self.line_editor.clear();

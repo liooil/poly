@@ -3755,6 +3755,73 @@ fn poly_call_js(resolved: &str, function: &str, args: &serde_json::Value) -> Res
     Ok(out.to_string())
 }
 
+/// Call a globalThis function by name with JSON arguments (Python -> JS).
+/// The name is resolved on every call, so it always refers to the current
+/// binding.
+fn poly_js_call_var(name: &str, args: &serde_json::Value) -> Result<String, String> {
+    let vm = VirtualMachine::get_mut();
+    let global = vm.global();
+
+    let fn_value = global
+        .to_js_value()
+        .get(global, name.as_bytes())
+        .map_err(|e| format!("cannot get global {name}: {e:?}"))?
+        .ok_or_else(|| format!("unknown JavaScript function: {name}"))?;
+    if !fn_value.is_callable() {
+        return Err(format!("unknown JavaScript function: {name}"));
+    }
+
+    let args_json = serde_json::to_string(args).map_err(|e| e.to_string())?;
+    let args_js = bun_core::String::clone_utf8(args_json.as_bytes())
+        .to_js(global)
+        .map_err(|e| format!("cannot encode call args: {e:?}"))?;
+
+    let result = PolyCallJsValue(global, fn_value, args_js);
+    if result.is_empty() {
+        return Err(poly_exception_message(global));
+    }
+    if result.is_undefined() {
+        return Ok("null".to_string());
+    }
+    // Strings become JSON strings; everything else is JSON.stringify'd.
+    if result.is_string() {
+        let s = result.to_bun_string(global).map_err(|e| format!("{e:?}"))?;
+        return serde_json::to_string(&s.to_string()).map_err(|e| e.to_string());
+    }
+    let mut out = bun_core::String::empty();
+    result
+        .json_stringify(global, 0, &mut out)
+        .map_err(|e| format!("cannot stringify call result: {e:?}"))?;
+    Ok(out.to_string())
+}
+
+/// Read a property of a globalThis object (Python -> JS object proxy).
+/// String results return verbatim; everything else is JSON.stringify'd.
+fn poly_js_get_var(name: &str, property: &str) -> Result<String, String> {
+    let vm = VirtualMachine::get_mut();
+    let global = vm.global();
+
+    let obj = global
+        .to_js_value()
+        .get(global, name.as_bytes())
+        .map_err(|e| format!("cannot get global {name}: {e:?}"))?
+        .ok_or_else(|| format!("unknown JavaScript variable: {name}"))?;
+    let value = obj
+        .get(global, property.as_bytes())
+        .map_err(|e| format!("cannot get {name}.{property}: {e:?}"))?
+        .ok_or_else(|| format!("undefined property {name}.{property}"))?;
+
+    if value.is_string() {
+        let s = value.to_bun_string(global).map_err(|e| format!("{e:?}"))?;
+        return serde_json::to_string(&s.to_string()).map_err(|e| e.to_string());
+    }
+    let mut out = bun_core::String::empty();
+    value
+        .json_stringify(global, 0, &mut out)
+        .map_err(|e| format!("cannot stringify {name}.{property}: {e:?}"))?;
+    Ok(out.to_string())
+}
+
 /// The `poly_python::HostCallback` installed by `init_runtime_state`.
 fn poly_host_callback(request_json: &str) -> Result<String, String> {
     let request: serde_json::Value = serde_json::from_str(request_json).map_err(|e| e.to_string())?;
@@ -3776,6 +3843,20 @@ fn poly_host_callback(request_json: &str) -> Result<String, String> {
             let result_json = poly_call_js(&resolved, function, &args)?;
             Ok(format!(r#"{{"ok":true,"value":{result_json}}}"#))
         }
+        // Cross-runtime REPL sharing: functions are identified by name (the
+        // name is the handle, mirroring v1 module interop).
+        "js_call_var" => {
+            let name = request.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let args = request.get("args").cloned().unwrap_or(serde_json::Value::Array(Vec::new()));
+            let result_json = poly_js_call_var(name, &args)?;
+            Ok(format!(r#"{{"ok":true,"value":{result_json}}}"#))
+        }
+        "js_get_var" => {
+            let name = request.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let property = request.get("property").and_then(|v| v.as_str()).unwrap_or("");
+            let value_json = poly_js_get_var(name, property)?;
+            Ok(format!(r#"{{"ok":true,"value":{value_json}}}"#))
+        }
         other => Err(format!("unknown poly host request kind: {other}")),
     }
 }
@@ -3789,6 +3870,7 @@ unsafe extern "C" {
         argsJson: JSValue,
     ) -> JSValue;
     safe fn PolyExceptionToString(global: &JSGlobalObject, exception: *mut bun_jsc::Exception) -> JSValue;
+    safe fn PolyCallJsValue(global: &JSGlobalObject, fnValue: JSValue, argsJson: JSValue) -> JSValue;
 }
 
 /// Synthesize ESM source for a `.py` module (v1 interop): JSON constants

@@ -190,4 +190,45 @@ extern "C" JSC::EncodedJSValue PolyExceptionToString(JSC::JSGlobalObject* global
     return JSC::JSValue::encode(JSC::jsString(vm, text));
 }
 
+/// Call an arbitrary JS callable (given as JSValue) with JSON arguments;
+/// returns the JSON string of the result (or "null" for undefined). JS
+/// exceptions propagate to the caller.
+extern "C" JSC::EncodedJSValue PolyCallJsValue(JSC::JSGlobalObject* global, JSC::JSValue fnValue, JSC::JSValue argsJsonValue)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!fnValue.isCallable())
+        return JSC::JSValue::encode(JSC::jsNull());
+
+    JSC::JSValue jsonObject = global->get(global, JSC::Identifier::fromString(vm, "JSON"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue parseFn = jsonObject.get(global, vm.propertyNames->parse);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData parseData = JSC::getCallData(parseFn);
+    JSC::MarkedArgumentBuffer parseArgs;
+    parseArgs.append(JSC::asString(argsJsonValue));
+    JSC::JSValue argsArray = JSC::call(global, parseFn, parseData, jsonObject, parseArgs);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!argsArray.isObject())
+        return JSC::JSValue::encode(JSC::jsNull());
+
+    JSC::CallData callData = JSC::getCallData(fnValue);
+    JSC::MarkedArgumentBuffer callArgs;
+    JSC::JSArray* arr = JSC::asArray(argsArray);
+    unsigned length = arr->length();
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned i = 0; i < length; i++) {
+        callArgs.append(arr->getIndex(global, i));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // Return the raw result value; the Rust side encodes it (string results
+    // as JSON strings, everything else via JSON.stringify, undefined as
+    // null). Stringifying here would lose the distinction between a number
+    // 3 (JSON text "3") and a string "3".
+    JSC::JSValue result = JSC::call(global, fnValue, callData, JSC::jsUndefined(), callArgs);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
+}
+
 } // namespace Poly

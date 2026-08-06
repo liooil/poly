@@ -132,7 +132,10 @@ impl std::error::Error for PythonError {}
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BridgeRequest {
     pub kind: String, // "load" | "describe" | "call" | "run_file"
+    #[serde(default)]
     pub module: String,
+    #[serde(default)]
+    pub handle: u64, // cross-runtime handle for call_py_handle
     #[serde(default)]
     pub function: String,
     #[serde(default)]
@@ -141,6 +144,18 @@ pub struct BridgeRequest {
     pub script_args: Vec<String>,
     #[serde(default)]
     pub referrer: String,
+}
+
+/// One variable exported from the Python REPL scope after evaluation.
+/// Functions are exported by name (the name is the cross-runtime handle,
+/// mirroring v1 module interop); other JSON-serializable values by value.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReplExport {
+    pub name: String,
+    /// "function" or "value".
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
 }
 
 /// Result of one REPL input evaluated against the persistent REPL scope.
@@ -152,6 +167,19 @@ pub struct ReplEvalResult {
     pub value: Option<String>,
     /// Error message / traceback, if evaluation failed.
     pub error: Option<String>,
+    /// Variables in the REPL scope after evaluation (functions by handle,
+    /// JSON values by value). Empty when `incomplete` — nothing ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exports: Vec<ReplExport>,
+}
+
+/// A shared (cross-language) variable injected into the Python REPL scope
+/// before evaluation: a JSON value or a JavaScript function (by name).
+#[derive(Debug, Clone)]
+pub struct SharedExport {
+    pub name: String,
+    pub kind: String,
+    pub value: Option<Value>,
 }
 
 /// Opaque response returned across the JSON bridge.
@@ -213,6 +241,61 @@ impl ModuleRegistry {
 const JS_PACKAGE_SOURCE: &str = r#"
 import sys
 import json
+
+class _JSVariable:
+    """A live proxy for a JavaScript global, identified by its name. Calls
+    resolve the function by name on every call; attribute/item access reads
+    through to the JS object. The name is the handle (mirrors v1 module
+    interop) — no snapshots, both namespaces stay fused."""
+
+    # Marker so REPL export skips proxies injected from JavaScript.
+    _poly_js_var = True
+
+    def __init__(self, name):
+        self._name = name
+
+    def __call__(self, *args):
+        _check_host()
+        request = json.dumps({
+            'kind': 'js_call_var',
+            'name': self._name,
+            'args': list(args),
+        })
+        response_json = globals()['__poly_js_host_call'](request)
+        response = json.loads(response_json)
+        if not response.get('ok', False):
+            raise _js_error(response)
+        return response.get('value') if 'value' in response else None
+
+    def __getattr__(self, name):
+        # Internal attributes (dunders, _name) never proxy.
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return self._read(name)
+
+    def __getitem__(self, key):
+        return self._read(key)
+
+    def _read(self, property_name):
+        _check_host()
+        request = json.dumps({
+            'kind': 'js_get_var',
+            'name': self._name,
+            'property': str(property_name),
+        })
+        response_json = globals()['__poly_js_host_call'](request)
+        response = json.loads(response_json)
+        if not response.get('ok', False):
+            raise _js_error(response)
+        return response.get('value') if 'value' in response else None
+
+    def __repr__(self):
+        return f"<js variable {self._name}>"
+
+
+def _make_js_variable(name):
+    return _JSVariable(name)
+
 
 class _JSFunction:
     """A callable wrapper around a named JS module export (v1: no handles,
@@ -423,8 +506,11 @@ impl PythonRuntime {
             .init_stdlib()
             .interpreter();
 
-        // Bootstrap the `js` package in the interpreter.
-        interpreter.enter(|vm| {
+        // Bootstrap the `js` package in the interpreter. This scope is also
+        // the REPL scope, so Python REPL code sees the js package (including
+        // the _make_js_variable proxy factory and __poly_js_host_call) and
+        // its globals() stays fused with globalThis.
+        let repl_scope = interpreter.enter(|vm| {
             let scope = vm.new_scope_with_main().unwrap();
             // Register the host-call dispatch function as a builtin.
             let dispatch_fn = vm.new_function("__poly_js_host_call", poly_js_host_call);
@@ -439,13 +525,14 @@ impl PythonRuntime {
                 "<poly-js-package>".to_owned(),
             )
             .expect("js package bootstrap failed");
+            scope
         });
 
         trace("RustPython runtime initialized");
         Self {
             interpreter,
             registry: Mutex::new(ModuleRegistry::new()),
-            repl_scope: parking_lot::Mutex::new(None),
+            repl_scope: parking_lot::Mutex::new(Some(repl_scope)),
         }
     }
 
@@ -460,6 +547,7 @@ impl PythonRuntime {
             "call" => self.call_function(&request),
             "run_file" => self.run_file_inner(&request),
             "import_js" => self.import_js(&request),
+            "py_call_var" => Ok(self.py_call_var(&request.function, &request.args)),
             other => Err(PythonError::new(format!("unknown request kind: {other}"))),
         }
     }
@@ -659,7 +747,7 @@ impl PythonRuntime {
     /// None), then as a statement. Syntactically incomplete input (open
     /// brackets, trailing block colon, backslash continuation) is reported
     /// so the REPL can collect more lines.
-    fn repl_eval(&self, code: &str) -> ReplEvalResult {
+    fn repl_eval(&self, code: &str, shared: &[SharedExport]) -> ReplEvalResult {
         use rustpython::vm::compiler::Mode;
 
         self.interpreter.enter(|vm| {
@@ -672,50 +760,82 @@ impl PythonRuntime {
                 guard.as_ref().unwrap().clone()
             };
 
+            // Inject shared (cross-language) variables before evaluating.
+            // JavaScript functions and objects become live `_JSVariable`
+            // proxies (resolved by name on every access); only JSON
+            // primitives are copied by value.
+            for export in shared {
+                let py_value = match export.kind.as_str() {
+                    "function" | "object" => match make_js_variable(vm, &scope, &export.name) {
+                        Some(v) => v,
+                        None => continue,
+                    },
+                    _ => match export.value.as_ref().and_then(|v| json_value_to_py(vm, v).ok()) {
+                        Some(v) => v,
+                        None => continue,
+                    },
+                };
+                if scope.globals.set_item(export.name.as_str(), py_value, vm).is_err() {
+                    return ReplEvalResult {
+                        incomplete: false,
+                        value: None,
+                        error: Some(format!("cannot set shared variable {:?}", export.name)),
+                        exports: Vec::new(),
+                    };
+                }
+            }
+
             // 1. Expression.
-            match vm.compile(code, Mode::Eval, "<repl>".to_owned()) {
+            let result = match vm.compile(code, Mode::Eval, "<repl>".to_owned()) {
                 Ok(code_obj) => match vm.run_code_obj(code_obj, scope.clone()) {
                     Ok(value) => {
                         // CPython REPL: print repr unless the result is None.
                         if vm.is_none(&value) {
-                            return ReplEvalResult {
+                            ReplEvalResult {
                                 incomplete: false,
                                 value: None,
                                 error: None,
-                            };
-                        }
-                        match value.repr_utf8(vm) {
-                            Ok(s) => ReplEvalResult {
-                                incomplete: false,
-                                value: Some(s.to_string()),
-                                error: None,
-                            },
-                            Err(e) => ReplEvalResult {
-                                incomplete: false,
-                                value: None,
-                                error: Some(render_exception(vm, &e)),
-                            },
+                                exports: Vec::new(),
+                            }
+                        } else {
+                            match value.repr_utf8(vm) {
+                                Ok(s) => ReplEvalResult {
+                                    incomplete: false,
+                                    value: Some(s.to_string()),
+                                    error: None,
+                                    exports: Vec::new(),
+                                },
+                                Err(e) => ReplEvalResult {
+                                    incomplete: false,
+                                    value: None,
+                                    error: Some(render_exception(vm, &e)),
+                                    exports: Vec::new(),
+                                },
+                            }
                         }
                     }
                     Err(e) => ReplEvalResult {
                         incomplete: false,
                         value: None,
                         error: Some(render_exception(vm, &e)),
+                        exports: Vec::new(),
                     },
                 },
                 Err(_) => {
                     // 2. Statement.
                     match vm.compile(code, Mode::Exec, "<repl>".to_owned()) {
-                        Ok(code_obj) => match vm.run_code_obj(code_obj, scope) {
+                        Ok(code_obj) => match vm.run_code_obj(code_obj, scope.clone()) {
                             Ok(_) => ReplEvalResult {
                                 incomplete: false,
                                 value: None,
                                 error: None,
+                                exports: Vec::new(),
                             },
                             Err(e) => ReplEvalResult {
                                 incomplete: false,
                                 value: None,
                                 error: Some(render_exception(vm, &e)),
+                                exports: Vec::new(),
                             },
                         },
                         Err(compile_err) => {
@@ -724,19 +844,140 @@ impl PythonRuntime {
                                     incomplete: true,
                                     value: None,
                                     error: None,
+                                    exports: Vec::new(),
                                 }
                             } else {
                                 ReplEvalResult {
                                     incomplete: false,
                                     value: None,
                                     error: Some(format!("SyntaxError: {compile_err}")),
+                                    exports: Vec::new(),
                                 }
                             }
                         }
                     }
                 }
+            };
+
+            // Export the REPL globals for cross-language sharing: functions
+            // by name (the name is the handle), JSON-serializable values by
+            // value. Skip underscore-prefixed names (dunders and injected
+            // helpers like __poly_js_host_call) and proxies injected from
+            // JavaScript (marked with _poly_js_var) — exporting those back
+            // would create a call loop.
+            let exports = if result.incomplete {
+                Vec::new()
+            } else {
+                let mut exports = Vec::new();
+                for (key, value) in scope.globals.items_vec() {
+                    let name = match key.str(vm) {
+                        Ok(s) => s.to_string(),
+                        Err(_) => continue,
+                    };
+                    if name.starts_with('_') {
+                        continue;
+                    }
+                    if value.is_callable() {
+                        // Skip JS proxies injected into this scope.
+                        if value.get_attr("_poly_js_var", vm).is_ok() {
+                            continue;
+                        }
+                        exports.push(ReplExport {
+                            name,
+                            kind: "function".to_string(),
+                            value: None,
+                        });
+                    } else if let Ok(json) = py_value_to_json(vm, &value) {
+                        exports.push(ReplExport {
+                            name,
+                            kind: "value".to_string(),
+                            value: Some(json),
+                        });
+                    }
+                }
+                exports
+            };
+
+            ReplEvalResult {
+                incomplete: result.incomplete,
+                value: result.value,
+                error: result.error,
+                exports,
             }
         })
+    }
+
+    /// Call a Python function from the REPL scope by name with JSON
+    /// arguments (JS -> Python). The name is resolved on every call, so it
+    /// always refers to the current binding.
+    fn py_call_var(&self, name: &str, args: &[Value]) -> BridgeResponse {
+        let result = self.interpreter.enter(|vm| {
+            let func = {
+                let scope = self.repl_scope.lock();
+                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                    Some(f) => f,
+                    None => {
+                        return BridgeResponse {
+                            ok: false,
+                            exports: None,
+                            value: None,
+                            error: Some(format!("unknown Python variable: {name}")),
+                            error_kind: Some("NameError".to_string()),
+                            traceback: None,
+                        }
+                    }
+                }
+            };
+
+            let py_args: Vec<_> = match args
+                .iter()
+                .map(|v| json_value_to_py(vm, v))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(args) => args,
+                Err(e) => {
+                    return BridgeResponse {
+                        ok: false,
+                        exports: None,
+                        value: None,
+                        error: Some(format!("argument conversion error: {e}")),
+                        error_kind: Some("TypeError".to_string()),
+                        traceback: None,
+                    }
+                }
+            };
+
+            let func_args = FuncArgs::from(py_args);
+            match func.call(func_args, vm) {
+                Ok(result_value) => match py_value_to_json(vm, &result_value) {
+                    Ok(json_val) => BridgeResponse {
+                        ok: true,
+                        exports: None,
+                        value: Some(json_val),
+                        error: None,
+                        error_kind: None,
+                        traceback: None,
+                    },
+                    Err(e) => BridgeResponse {
+                        ok: false,
+                        exports: None,
+                        value: None,
+                        error: Some(format!("value conversion error: {e}")),
+                        error_kind: Some("TypeError".to_string()),
+                        traceback: None,
+                    },
+                },
+                Err(exception) => BridgeResponse {
+                    ok: false,
+                    exports: None,
+                    value: None,
+                    error: Some(render_exception(vm, &exception)),
+                    error_kind: Some("PythonError".to_string()),
+                    traceback: Some(render_exception(vm, &exception)),
+                },
+            }
+        });
+        result
     }
 
     // -----------------------------------------------------------------------
@@ -1023,10 +1264,25 @@ fn is_incomplete_python(code: &str) -> bool {
     trimmed.ends_with(':')
 }
 
+/// Create a Python `_JSVariable` proxy for a JavaScript function (by global
+/// name), via the factory installed by the embedded `js` package.
+fn make_js_variable(
+    vm: &VirtualMachine,
+    scope: &Scope,
+    name: &str,
+) -> Option<rustpython::vm::PyObjectRef> {
+    let factory = scope.globals.get_item("_make_js_variable", vm).ok()?;
+    let args = FuncArgs::from(vec![vm.new_pyobj(name.to_string())]);
+    factory.call(args, vm).ok()
+}
+
 /// Evaluate one REPL input against the persistent Python REPL scope.
-/// Returns a JSON `ReplEvalResult` ({incomplete, value, error}).
-pub fn repl_eval(code: &str) -> Result<String, PythonError> {
-    let result = RUNTIME.with(|runtime| runtime.repl_eval(code));
+/// `shared` exports are injected first (JSON values directly, JS function
+/// handles as callable proxies); the response exports the scope's functions
+/// by handle and JSON values by value for cross-language sharing. Returns a
+/// JSON `ReplEvalResult` ({incomplete, value, error, exports}).
+pub fn repl_eval(code: &str, shared: &[SharedExport]) -> Result<String, PythonError> {
+    let result = RUNTIME.with(|runtime| runtime.repl_eval(code, shared));
     serde_json::to_string(&result)
         .map_err(|e| PythonError::new(format!("cannot encode repl result: {e}")))
 }
@@ -1084,7 +1340,10 @@ pub fn handle_bridge_request(request_json: &str) -> Result<String, PythonError> 
     let request: BridgeRequest = serde_json::from_str(request_json)
         .map_err(|e| PythonError::new(format!("invalid bridge request: {e}")))?;
 
-    if request.module.is_empty() && request.kind != "import_js" {
+    if request.module.is_empty()
+        && request.kind != "import_js"
+        && request.kind != "py_call_var"
+    {
         return Err(PythonError::new("module path cannot be empty"));
     }
 
@@ -1112,6 +1371,7 @@ pub fn run_file(path: &Path, args: &[String]) -> Result<u32, PythonError> {
     let request = BridgeRequest {
         kind: "run_file".to_string(),
         module: path.to_string_lossy().into_owned(),
+        handle: 0,
         function: String::new(),
         args: Vec::new(),
         script_args: args.to_vec(),
@@ -1145,6 +1405,7 @@ pub fn describe_module(module_path: &str) -> Result<String, PythonError> {
     let request = BridgeRequest {
         kind: "describe".to_string(),
         module: module_path.to_string(),
+        handle: 0,
         function: String::new(),
         args: Vec::new(),
         script_args: Vec::new(),
@@ -1209,6 +1470,7 @@ mod tests {
             let load_req = BridgeRequest {
                 kind: "load".to_string(),
                 module: path_str.clone(),
+                handle: 0,
                 function: String::new(),
                 args: Vec::new(),
                 script_args: Vec::new(),
@@ -1219,6 +1481,7 @@ mod tests {
             let call_req = BridgeRequest {
                 kind: "call".to_string(),
                 module: path_str,
+                handle: 0,
                 function,
                 args,
                 script_args: Vec::new(),
@@ -1236,6 +1499,7 @@ mod tests {
             let request = BridgeRequest {
                 kind: "load".to_string(),
                 module: fixture.to_string_lossy().into_owned(),
+                handle: 0,
                 function: String::new(),
                 args: Vec::new(),
                 script_args: Vec::new(),
@@ -1260,6 +1524,7 @@ mod tests {
             let req1 = BridgeRequest {
                 kind: "load".to_string(),
                 module: path_str.clone(),
+                handle: 0,
                 function: String::new(),
                 args: Vec::new(),
                 script_args: Vec::new(),
@@ -1271,6 +1536,7 @@ mod tests {
             let req2 = BridgeRequest {
                 kind: "call".to_string(),
                 module: path_str,
+                handle: 0,
                 function: "get_call_count".to_string(),
                 args: vec![],
                 script_args: Vec::new(),
@@ -1364,6 +1630,7 @@ mod tests {
             let request = BridgeRequest {
                 kind: "load".to_string(),
                 module: "/nonexistent/module.py".to_string(),
+                handle: 0,
                 function: String::new(),
                 args: Vec::new(),
                 script_args: Vec::new(),
