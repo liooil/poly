@@ -9,6 +9,7 @@ description = "Embedded RustPython backend for the Polyglot Bun fork"
 [dependencies]
 malachite-bigint = "=0.9.1"
 libc = "=0.2.183"
+parking_lot = "0.12"
 rustpython = { version = "0.5.0", default-features = false, features = [
     "freeze-stdlib",
     "host_env",
