@@ -14,7 +14,9 @@ pub use bun_core::DecodeWindows;
 
 use crate as sys;
 
-bun_core::define_scoped_log!(log, SYS, visible);
+// SYS 日志默认隐藏：debug 构建不再刷屏 `[sys] close(...)` 等 syscall 跟踪。
+// 需要时用 `BUN_DEBUG_SYS=1` 或 `--debug-sys` 重新开启。
+bun_core::define_scoped_log!(log, SYS, hidden);
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ErrorCase {
