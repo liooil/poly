@@ -315,6 +315,15 @@ SQL 以 Bun SQL 的 PostgreSQL、MySQL 和 SQLite 统一 API 为宿主基线；R
 关注列表用于记录方向匹配、但嵌入边界或维护成本尚未达到 Poly 准入条件的项目。
 进入此列表不代表版本承诺，也不成为 Native Profile 或 Release 的门禁。
 
+### Rust：PolyMIR 解释执行（设计冻结，未进入实施顺序）
+
+用 rustc 前端把 `.rs` 编译到 MIR（止于 MIR，不生成目标文件/机器码），并在
+Poly 进程内复用 `rustc_const_eval::interpret` 实现面向应用的 `PolyMachine`
+解释执行，实现 `poly run a.rs` 与 Rust → JS/Python 同进程互操作。技术可行性
+已验证（Miri 已公开 `create_ecx`/`eval_entry`，Priroda 是独立消费者；见
+`poly/docs/rust-mir-interpreter.md`）。主要门槛是 rustc_private 双重版本锁定、
+sysroot 嵌入体积与 `Machine` trait 自实现工作量，暂不进入实施顺序。
+
 ### Nushell：等待稳定嵌入条件
 
 Nushell 的结构化 `Value`、`PipelineData` 和交互体验与 Poly 的 Shell、SQL 及
