@@ -518,11 +518,26 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    const ALL: [ReplCommand; 9] = [
+    const ALL: [ReplCommand; 12] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
             handler: cmd_help,
+        },
+        ReplCommand {
+            name: b".py",
+            help: "Switch to Python mode (embedded RustPython)",
+            handler: cmd_py,
+        },
+        ReplCommand {
+            name: b".js",
+            help: "Switch back to JavaScript mode",
+            handler: cmd_js,
+        },
+        ReplCommand {
+            name: b".mode",
+            help: "Show the current language mode",
+            handler: cmd_mode,
         },
         ReplCommand {
             name: b".exit",
@@ -703,6 +718,33 @@ fn cmd_exit(_: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::ExitRepl
 }
 
+fn cmd_py(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    repl.mode = ReplMode::Python;
+    repl.print(format_args!(
+        "{}Switched to Python mode{} (type {} .js {} to switch back)\n",
+        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+    ));
+    ReplResult::SkipEval
+}
+
+fn cmd_js(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    repl.mode = ReplMode::Js;
+    repl.print(format_args!(
+        "{}Switched to JavaScript mode{} (type {} .py {} for Python)\n",
+        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+    ));
+    ReplResult::SkipEval
+}
+
+fn cmd_mode(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    let mode = match repl.mode {
+        ReplMode::Js => "JavaScript",
+        ReplMode::Python => "Python (embedded RustPython)",
+    };
+    repl.print(format_args!("Current mode: {}\n", mode));
+    ReplResult::SkipEval
+}
+
 fn cmd_clear(repl: &mut Repl, _: &[u8]) -> ReplResult {
     // Clear screen
     repl.write(Cursor::CLEAR_SCREEN.as_bytes());
@@ -827,6 +869,13 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 // Main REPL Struct
 // ============================================================================
 
+/// Which language the REPL evaluates inputs as.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplMode {
+    Js,
+    Python,
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -834,6 +883,7 @@ pub(super) struct Repl<'a> {
     editor_buffer: Vec<u8>,
 
     // State
+    mode: ReplMode,
     in_multiline: bool,
     editor_mode: bool,
     running: bool,
@@ -873,6 +923,7 @@ impl<'a> Repl<'a> {
             history: History::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
+            mode: ReplMode::Js,
             in_multiline: false,
             editor_mode: false,
             running: false,
@@ -1178,10 +1229,21 @@ impl<'a> Repl<'a> {
             }
         }
 
-        if self.use_colors {
-            concat!("\x1b[2m", "\u{276f}", "\x1b[0m", " ").as_bytes()
-        } else {
-            b"> "
+        match self.mode {
+            ReplMode::Python => {
+                if self.use_colors {
+                    concat!("\x1b[2m", ">>> ", "\x1b[0m").as_bytes()
+                } else {
+                    b">>> "
+                }
+            }
+            ReplMode::Js => {
+                if self.use_colors {
+                    concat!("\x1b[2m", "\u{276f}", "\x1b[0m", " ").as_bytes()
+                } else {
+                    b"> "
+                }
+            }
         }
     }
 
@@ -1189,7 +1251,10 @@ impl<'a> Repl<'a> {
         if self.in_multiline || self.editor_mode {
             return 4; // "... "
         }
-        2 // "> " or "\u{276f} "
+        match self.mode {
+            ReplMode::Python => 4, // ">>> "
+            ReplMode::Js => 2,     // "> " or "\u{276f} "
+        }
     }
 
     fn refresh_line(&self) {
@@ -1257,6 +1322,36 @@ impl<'a> Repl<'a> {
     // ========================================================================
     // JavaScript Evaluation
     // ========================================================================
+
+    /// Evaluate one input in Python mode against the persistent REPL scope.
+    /// Returns `true` if the input is incomplete (keep collecting lines).
+    fn python_eval_and_print(&mut self, code: &[u8]) -> bool {
+        let code_str = String::from_utf8_lossy(code);
+        match poly_python::repl_eval(&code_str) {
+            Ok(json) => match serde_json::from_str::<poly_python::ReplEvalResult>(&json) {
+                Ok(result) => {
+                    if result.incomplete {
+                        return true;
+                    }
+                    if let Some(value) = result.value {
+                        self.print(format_args!("{}\n", value));
+                    }
+                    if let Some(error) = result.error {
+                        self.print_error(format_args!("{}\n", error));
+                    }
+                    false
+                }
+                Err(_) => {
+                    self.print_error(format_args!("invalid Python REPL response\n"));
+                    false
+                }
+            },
+            Err(e) => {
+                self.print_error(format_args!("{}\n", e.message()));
+                false
+            }
+        }
+    }
 
     fn evaluate_and_print(&mut self, code: &[u8]) {
         let Some(global) = self.global else {
@@ -1984,9 +2079,11 @@ impl<'a> Repl<'a> {
         self.history.load()?;
 
         // Print welcome message
-        self.print(format_args!("Welcome to Bun v{}\n", VERSION));
+        self.print(format_args!("Welcome to Poly v{}\n", VERSION));
         self.print(format_args!(
-            "Type {}.copy [code]{} to copy to clipboard. {}.help{} for more info.\n\n",
+            "JavaScript mode by default. Type {}.py{} for Python (RustPython), {}.js{} to switch back. {}.help{} for more info.\n\n",
+            Color::CYAN,
+            Color::RESET,
             Color::CYAN,
             Color::RESET,
             Color::CYAN,
@@ -2206,6 +2303,37 @@ impl<'a> Repl<'a> {
         } else {
             &line
         };
+
+        if self.mode == ReplMode::Python {
+            // Python mode: the evaluator reports incomplete input itself
+            // (open brackets / trailing block colon / backslash), without
+            // executing it. Complete input is evaluated immediately.
+            // Owned copy so the `&mut self` call below doesn't alias the
+            // multiline buffer borrow.
+            let full_code: Box<[u8]> = if self.in_multiline {
+                Box::<[u8]>::from(self.multiline_buffer.as_slice())
+            } else {
+                Box::<[u8]>::from(line.as_slice())
+            };
+            let incomplete = self.python_eval_and_print(&full_code);
+            if incomplete {
+                if !self.in_multiline {
+                    self.in_multiline = true;
+                    self.multiline_buffer.extend_from_slice(&line);
+                    self.multiline_buffer.push(b'\n');
+                }
+                self.line_editor.clear();
+                self.refresh_line();
+                return Ok(());
+            }
+            self.history.add(strings::trim(&full_code, b"\n"))?;
+            self.line_editor.clear();
+            self.multiline_buffer.clear();
+            self.in_multiline = false;
+            self.history.reset_position();
+            self.refresh_line();
+            return Ok(());
+        }
 
         if is_incomplete_code(full_code) {
             if !self.in_multiline {

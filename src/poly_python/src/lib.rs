@@ -143,6 +143,17 @@ pub struct BridgeRequest {
     pub referrer: String,
 }
 
+/// Result of one REPL input evaluated against the persistent REPL scope.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReplEvalResult {
+    /// Input is syntactically incomplete; keep collecting lines.
+    pub incomplete: bool,
+    /// `repr()` of the evaluated expression (None for statements).
+    pub value: Option<String>,
+    /// Error message / traceback, if evaluation failed.
+    pub error: Option<String>,
+}
+
 /// Opaque response returned across the JSON bridge.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BridgeResponse {
@@ -385,6 +396,9 @@ pub fn clear_host_callback() {
 struct PythonRuntime {
     interpreter: Interpreter,
     registry: Mutex<ModuleRegistry>,
+    /// Persistent REPL scope: variables assigned in `poly repl` (py mode)
+    /// survive across inputs. Created on first `repl_eval`.
+    repl_scope: parking_lot::Mutex<Option<Scope>>,
 }
 
 thread_local! {
@@ -431,6 +445,7 @@ impl PythonRuntime {
         Self {
             interpreter,
             registry: Mutex::new(ModuleRegistry::new()),
+            repl_scope: parking_lot::Mutex::new(None),
         }
     }
 
@@ -637,6 +652,91 @@ impl PythonRuntime {
             .map_err(|e| PythonError::new(format!("invalid host response: {e}")))?;
 
         Ok(response)
+    }
+
+    /// Evaluate one REPL input against the persistent REPL scope. Tries the
+    /// input as an expression first (printing `repr` unless the result is
+    /// None), then as a statement. Syntactically incomplete input (open
+    /// brackets, trailing block colon, backslash continuation) is reported
+    /// so the REPL can collect more lines.
+    fn repl_eval(&self, code: &str) -> ReplEvalResult {
+        use rustpython::vm::compiler::Mode;
+
+        self.interpreter.enter(|vm| {
+            // Persistent scope: create on first use, reuse forever after.
+            let scope = {
+                let mut guard = self.repl_scope.lock();
+                if guard.is_none() {
+                    *guard = Some(vm.new_scope_with_main().unwrap());
+                }
+                guard.as_ref().unwrap().clone()
+            };
+
+            // 1. Expression.
+            match vm.compile(code, Mode::Eval, "<repl>".to_owned()) {
+                Ok(code_obj) => match vm.run_code_obj(code_obj, scope.clone()) {
+                    Ok(value) => {
+                        // CPython REPL: print repr unless the result is None.
+                        if vm.is_none(&value) {
+                            return ReplEvalResult {
+                                incomplete: false,
+                                value: None,
+                                error: None,
+                            };
+                        }
+                        match value.repr_utf8(vm) {
+                            Ok(s) => ReplEvalResult {
+                                incomplete: false,
+                                value: Some(s.to_string()),
+                                error: None,
+                            },
+                            Err(e) => ReplEvalResult {
+                                incomplete: false,
+                                value: None,
+                                error: Some(render_exception(vm, &e)),
+                            },
+                        }
+                    }
+                    Err(e) => ReplEvalResult {
+                        incomplete: false,
+                        value: None,
+                        error: Some(render_exception(vm, &e)),
+                    },
+                },
+                Err(_) => {
+                    // 2. Statement.
+                    match vm.compile(code, Mode::Exec, "<repl>".to_owned()) {
+                        Ok(code_obj) => match vm.run_code_obj(code_obj, scope) {
+                            Ok(_) => ReplEvalResult {
+                                incomplete: false,
+                                value: None,
+                                error: None,
+                            },
+                            Err(e) => ReplEvalResult {
+                                incomplete: false,
+                                value: None,
+                                error: Some(render_exception(vm, &e)),
+                            },
+                        },
+                        Err(compile_err) => {
+                            if is_incomplete_python(code) {
+                                ReplEvalResult {
+                                    incomplete: true,
+                                    value: None,
+                                    error: None,
+                                }
+                            } else {
+                                ReplEvalResult {
+                                    incomplete: false,
+                                    value: None,
+                                    error: Some(format!("SyntaxError: {compile_err}")),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -897,6 +997,38 @@ fn poly_js_host_call(request_str: String, vm: &VirtualMachine) -> rustpython::vm
             "__poly_js_host_call requires an active JSC/Bun runtime context".to_owned(),
         )),
     }
+}
+
+/// Heuristic: does this input need more lines? Open brackets, a trailing
+/// block colon, or a backslash continuation all mean the REPL should keep
+/// collecting instead of reporting a SyntaxError.
+fn is_incomplete_python(code: &str) -> bool {
+    let trimmed = code.trim_end();
+    if trimmed.ends_with('\\') {
+        return true;
+    }
+    let mut depth: i32 = 0;
+    for c in code.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    if depth > 0 {
+        return true;
+    }
+    // Trailing colon starts a block. (A dict literal ends with `}`, so this
+    // only fires on real block headers like `def f():` / `if x:`.)
+    trimmed.ends_with(':')
+}
+
+/// Evaluate one REPL input against the persistent Python REPL scope.
+/// Returns a JSON `ReplEvalResult` ({incomplete, value, error}).
+pub fn repl_eval(code: &str) -> Result<String, PythonError> {
+    let result = RUNTIME.with(|runtime| runtime.repl_eval(code));
+    serde_json::to_string(&result)
+        .map_err(|e| PythonError::new(format!("cannot encode repl result: {e}")))
 }
 
 // ---------------------------------------------------------------------------
