@@ -44,6 +44,7 @@ pub struct FnDef {
 pub struct Param {
     pub name: String,
     pub ty: Option<Ty>,
+    pub mutable: bool,
     pub span: TextRange,
 }
 
@@ -298,18 +299,25 @@ impl LowerCtx {
 
     fn lower_param(&mut self, p: &ast::Param) -> Param {
         let span = p.syntax().text_range();
-        let name = match p.pat() {
-            Some(ast::Pat::IdentPat(id)) => id
-                .name()
-                .map(|n| n.text().to_string())
-                .unwrap_or_default(),
+        let (name, mutable) = match p.pat() {
+            Some(ast::Pat::IdentPat(id)) => (
+                id.name()
+                    .map(|n| n.text().to_string())
+                    .unwrap_or_default(),
+                id.mut_token().is_some(),
+            ),
             _ => {
                 self.unsupported(span, "pattern parameters");
-                String::new()
+                (String::new(), false)
             }
         };
         let ty = p.ty().and_then(|t| self.lower_type(&t));
-        Param { name, ty, span }
+        Param {
+            name,
+            ty,
+            mutable,
+            span,
+        }
     }
 
     /// Lower a type reference. Returns `None` for unsupported types (after

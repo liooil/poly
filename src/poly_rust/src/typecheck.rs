@@ -56,7 +56,13 @@ impl TypeChecker {
         let mut env = HashMap::new();
         for p in &f.params {
             let ty = p.ty.unwrap_or(Ty::Unknown);
-            env.insert(p.name.clone(), Binding { ty, mutable: false });
+            env.insert(
+                p.name.clone(),
+                Binding {
+                    ty,
+                    mutable: p.mutable,
+                },
+            );
         }
         self.check_block(&f.body, &mut env);
         // Return type check: if the fn declares a return type, the tail expr

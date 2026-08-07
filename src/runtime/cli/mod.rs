@@ -651,7 +651,7 @@ pub mod help_command {
 <b>Usage:<r> <b>poly \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
 
 <b>Commands:<r>
-  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a JavaScript or Python file
+  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a JavaScript, Python, or Rust file
             <d>lint<r>                 Run a package.json script
   <b><magenta>test<r>                           Run unit tests
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(polyx)<r>
@@ -683,6 +683,14 @@ Python (embedded RustPython):
   <b><magenta>app.py<r>                       Run a Python script directly (same as <b>poly run app.py<r>)
   <b><magenta>run<r>       <d>./app.py<r>           Python entrypoints run inside the full runtime, so
                                       Python can import JavaScript modules via js.import_module()
+
+Rust (experimental interpreter, no rustc required):
+  <b><magenta>app.rs<r>                       Interpret a Rust script directly (same as <b>poly run app.rs<r>)
+  <b><magenta>run<r>       <d>./app.rs<r>           Parsed with rust-analyzer's parser and interpreted
+                                      in-process. Supports a subset of Rust: functions, let/let mut,
+                                      integers/floats/bools/strings, arithmetic and comparison,
+                                      if/else, loop/while, return, println!. Unsupported features
+                                      report a source-located diagnostic.
 
 Shell (Bun Shell, in-process):
   <b><magenta>app.sh<r>                       Run a Shell script in-process (same as <b>poly run app.sh<r>)

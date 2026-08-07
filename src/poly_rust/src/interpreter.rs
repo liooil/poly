@@ -600,7 +600,10 @@ impl<'a> Interpreter<'a> {
             }
             None => String::new(),
         };
-        let rendered = format_with(&fmt, &values[1..]).map_err(|msg| {
+        let rendered = format_with(&fmt, &values[1..], |name| {
+            env.get(name).map(|b| b.value.clone())
+        })
+        .map_err(|msg| {
             self.error(span, msg);
             EvalError::Runtime
         })?;
@@ -643,7 +646,7 @@ impl<'a> Interpreter<'a> {
                 param.name.clone(),
                 Binding {
                     value,
-                    mutable: false,
+                    mutable: param.mutable,
                 },
             );
         }
@@ -721,8 +724,15 @@ fn ty_name(ty: crate::value::Ty) -> &'static str {
     ty.name()
 }
 
-/// Simple `{}` format-string renderer.
-fn format_with(fmt: &str, values: &[Value]) -> Result<String, String> {
+/// Simple `{}` / `{name}` / `{:?}` format-string renderer.
+///
+/// Positional `{}` and `{:?}` consume `values` in order; `{name}` (Rust 2021
+/// inline-capture style) looks up `name` through `lookup`.
+fn format_with(
+    fmt: &str,
+    values: &[Value],
+    lookup: impl Fn(&str) -> Option<Value>,
+) -> Result<String, String> {
     let mut out = String::with_capacity(fmt.len() + 16);
     let mut chars = fmt.chars().peekable();
     let mut arg_idx = 0usize;
@@ -763,10 +773,17 @@ fn format_with(fmt: &str, values: &[Value]) -> Result<String, String> {
                     other => out.push_str(&other.to_string()),
                 }
                 arg_idx += 1;
-            } else {
+            } else if let Some(v) = spec.strip_prefix(':') {
+                // `{:?}` handled above; other format specifiers unsupported.
                 return Err(format!(
-                    "invalid format specifier `{{{spec}}}` (only `{{}}` and `{{:?}}` are supported)"
+                    "invalid format specifier `{{{spec}}}` (only `{{}}`, `{{:?}}`, and `{{name}}` are supported)"
                 ));
+            } else {
+                // `{name}` — inline capture from the environment.
+                let v = lookup(&spec).ok_or_else(|| {
+                    format!("cannot capture `{spec}`: no such variable in scope")
+                })?;
+                out.push_str(&v.to_string());
             }
         } else if c == '}' {
             if chars.peek() == Some(&'}') {

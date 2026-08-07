@@ -360,6 +360,39 @@ fn main() {
 }
 
 #[test]
+fn print_named_capture() {
+    let (code, out, diags) = run(r#"
+fn main() {
+    let name = "poly";
+    let n = 42;
+    println!("{name} {n}");
+}
+"#);
+    assert_eq!(code, 0, "diagnostics: {diags:?}");
+    assert_eq!(out, vec!["poly 42"]);
+}
+
+#[test]
+fn mutable_parameter() {
+    let (code, out, diags) = run(r#"
+fn gcd(mut a: i64, mut b: i64) -> i64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn main() {
+    println!("{}", gcd(48, 18));
+}
+"#);
+    assert_eq!(code, 0, "diagnostics: {diags:?}");
+    assert_eq!(out, vec!["6"]);
+}
+
+#[test]
 fn shadowing() {
     let (code, out, diags) = run(r#"
 fn main() {
