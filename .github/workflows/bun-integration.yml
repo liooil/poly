@@ -196,11 +196,13 @@ jobs:
               'printf("repl-c-ok\n");',
               ".exit"
           )
-          $output = $input | & $poly repl 2>&1
+          $output = $input | & $poly repl 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) {
               throw "REPL smoke test failed with exit code $LASTEXITCODE."
           }
-          if (-not ($output -match "repl-shell-ok" -and $output -match '"x":42' -and $output -match "repl-c-ok")) {
+          # The SQL result renders as a JSON string, so the column name's
+          # quotes are escaped (`\"x\":42`), and `-match` is a regex.
+          if (-not ($output -match "repl-shell-ok" -and $output -match '\\"x\\":42' -and $output -match "repl-c-ok")) {
               throw "REPL smoke test output missing expected results."
           }
 
