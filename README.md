@@ -23,6 +23,19 @@ workflow, and release artifact.
 > in-process bridge exist today; cross-language imports, unified dependency
 > management, and application bundling are roadmap features.
 
+## Derived from Bun
+
+Poly is a fork of [Bun](https://bun.sh) — the JavaScript/TypeScript runtime and
+toolkit (originally `oven-sh/bun`). Bun's source tree and full history are part
+of this repository: JavaScriptCore, the npm-compatible package manager, the
+bundler, the test runner, and Bun Shell all come from Bun, with a Rust host and
+an embedded RustPython interpreter layered on top.
+
+The fork was established from Bun commit
+[`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)
+and tracks later upstream changes through explicit merge commits (see
+[Sync Bun upstream](#sync-bun-upstream)). Poly keeps Bun's MIT license.
+
 ## The target experience
 
 Python files should behave like modules, not services:
@@ -153,9 +166,8 @@ toolchain. See the
 [Bun integration workflow](.github/workflows/bun-integration.yml) for the
 complete Windows and Linux environments.
 
-The fork was established from Bun commit
-[`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)
-and receives later upstream changes through explicit merge commits.
+Poly is derived from Bun — see [Derived from Bun](#derived-from-bun) for the
+fork origin and upstream tracking policy.
 
 #### Windows
 
