@@ -73,6 +73,7 @@ jobs:
             curl \
             golang \
             libffi-dev \
+            liblzma-dev \
             libtool \
             lld-${LLVM_VERSION_MAJOR} \
             llvm-${LLVM_VERSION_MAJOR} \
