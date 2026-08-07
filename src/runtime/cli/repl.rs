@@ -518,7 +518,7 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    const ALL: [ReplCommand; 12] = [
+    const ALL: [ReplCommand; 15] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
@@ -526,12 +526,27 @@ impl ReplCommand {
         },
         ReplCommand {
             name: b".py",
-            help: "Switch to Python mode (embedded RustPython)",
+            help: "Switch to Python mode (.py <code> runs one statement inline)",
             handler: cmd_py,
         },
         ReplCommand {
+            name: b".sh",
+            help: "Switch to Shell mode (.sh <cmd> runs one command inline)",
+            handler: cmd_sh,
+        },
+        ReplCommand {
+            name: b".sql",
+            help: "Switch to SQL mode (.sql <query> runs one query inline)",
+            handler: cmd_sql,
+        },
+        ReplCommand {
+            name: b".c",
+            help: "Switch to C mode (.c <expr> evaluates inline)",
+            handler: cmd_c,
+        },
+        ReplCommand {
             name: b".js",
-            help: "Switch back to JavaScript mode",
+            help: "Switch back to JavaScript mode (.js <code> runs one expression inline)",
             handler: cmd_js,
         },
         ReplCommand {
@@ -718,7 +733,12 @@ fn cmd_exit(_: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::ExitRepl
 }
 
-fn cmd_py(repl: &mut Repl, _: &[u8]) -> ReplResult {
+fn cmd_py(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let code = strings::trim(args, b" \t");
+    if !code.is_empty() {
+        repl.eval_inline(ReplMode::Python, code);
+        return ReplResult::SkipEval;
+    }
     repl.mode = ReplMode::Python;
     repl.print(format_args!(
         "{}Switched to Python mode{} (type {} .js {} to switch back)\n",
@@ -727,7 +747,12 @@ fn cmd_py(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::SkipEval
 }
 
-fn cmd_js(repl: &mut Repl, _: &[u8]) -> ReplResult {
+fn cmd_js(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let code = strings::trim(args, b" \t");
+    if !code.is_empty() {
+        repl.eval_inline(ReplMode::Js, code);
+        return ReplResult::SkipEval;
+    }
     repl.mode = ReplMode::Js;
     repl.print(format_args!(
         "{}Switched to JavaScript mode{} (type {} .py {} for Python)\n",
@@ -736,11 +761,50 @@ fn cmd_js(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::SkipEval
 }
 
+fn cmd_sh(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let code = strings::trim(args, b" \t");
+    if !code.is_empty() {
+        repl.eval_inline(ReplMode::Shell, code);
+        return ReplResult::SkipEval;
+    }
+    repl.mode = ReplMode::Shell;
+    repl.print(format_args!(
+        "{}Switched to Shell mode{} (Bun Shell, in-process; type {} .js {} to switch back)\n",
+        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+    ));
+    ReplResult::SkipEval
+}
+
+fn cmd_sql(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let code = strings::trim(args, b" \t");
+    if !code.is_empty() {
+        repl.eval_inline(ReplMode::Sql, code);
+        return ReplResult::SkipEval;
+    }
+    repl.mode = ReplMode::Sql;
+    repl.print(format_args!(
+        "{}Switched to SQL mode{} (session-persistent in-memory SQLite; type {} .js {} to switch back)\n",
+        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+    ));
+    ReplResult::SkipEval
+}
+
+fn cmd_c(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let code = strings::trim(args, b" \t");
+    if !code.is_empty() {
+        repl.eval_inline(ReplMode::C, code);
+        return ReplResult::SkipEval;
+    }
+    repl.mode = ReplMode::C;
+    repl.print(format_args!(
+        "{}Switched to C mode{} (embedded TinyCC; expressions echo values, declarations persist at file scope, statements run once; type {} .js {} to switch back)\n",
+        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+    ));
+    ReplResult::SkipEval
+}
+
 fn cmd_mode(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    let mode = match repl.mode {
-        ReplMode::Js => "JavaScript",
-        ReplMode::Python => "Python (embedded RustPython)",
-    };
+    let mode = repl.mode.name();
     repl.print(format_args!("Current mode: {}\n", mode));
     ReplResult::SkipEval
 }
@@ -874,6 +938,25 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 enum ReplMode {
     Js,
     Python,
+    /// Bun Shell — each input runs in-process via `$`.
+    Shell,
+    /// SQL — each input runs against a session-persistent in-memory SQLite.
+    Sql,
+    /// C — each input is compiled with embedded TinyCC; source accumulates
+    /// across inputs (v1 experiment).
+    C,
+}
+
+impl ReplMode {
+    fn name(self) -> &'static str {
+        match self {
+            ReplMode::Js => "JavaScript",
+            ReplMode::Python => "Python (embedded RustPython)",
+            ReplMode::Shell => "Shell (Bun Shell)",
+            ReplMode::Sql => "SQL (in-memory SQLite)",
+            ReplMode::C => "C (embedded TinyCC)",
+        }
+    }
 }
 
 pub(super) struct Repl<'a> {
@@ -1249,6 +1332,27 @@ impl<'a> Repl<'a> {
                     b">>> "
                 }
             }
+            ReplMode::Shell => {
+                if self.use_colors {
+                    concat!("\x1b[2m", "sh> ", "\x1b[0m").as_bytes()
+                } else {
+                    b"sh> "
+                }
+            }
+            ReplMode::Sql => {
+                if self.use_colors {
+                    concat!("\x1b[2m", "sql> ", "\x1b[0m").as_bytes()
+                } else {
+                    b"sql> "
+                }
+            }
+            ReplMode::C => {
+                if self.use_colors {
+                    concat!("\x1b[2m", "c> ", "\x1b[0m").as_bytes()
+                } else {
+                    b"c> "
+                }
+            }
             ReplMode::Js => {
                 if self.use_colors {
                     concat!("\x1b[2m", "\u{276f}", "\x1b[0m", " ").as_bytes()
@@ -1265,6 +1369,9 @@ impl<'a> Repl<'a> {
         }
         match self.mode {
             ReplMode::Python => 4, // ">>> "
+            ReplMode::Shell => 4,  // "sh> "
+            ReplMode::Sql => 5,    // "sql> "
+            ReplMode::C => 3,      // "c> "
             ReplMode::Js => 2,     // "> " or "\u{276f} "
         }
     }
@@ -1500,6 +1607,32 @@ impl<'a> Repl<'a> {
                          return r.value;\n\
                          }};\n\
                          globalThis[{name_json}].__polyPyVar = {name_json};\n"
+                    ));
+                }
+                // Arbitrary Python object (instance, module, ...): live proxy
+                // backed by `py_get_var` / `py_call_attr`. Attribute reads
+                // tunnel to Python; callable attributes become function
+                // proxies. Marked `__polyPyVar` so JS->Python sync skips it.
+                "object" => {
+                    code.push_str(&format!(
+                        "globalThis[{name_json}] = new Proxy(Object.create(null), {{\n\
+                         get(_t, prop) {{\n\
+                           if (prop === \"__polyPyVar\") return {name_json};\n\
+                           if (typeof prop === \"symbol\") return undefined;\n\
+                           const r = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"py_get_var\", function: {name_json}, property: String(prop)}})));\n\
+                           if (!r.ok) {{ throw new Error(r.error ?? \"Python attribute access failed\"); }}\n\
+                           if (r.callable) {{\n\
+                             return function(...args) {{\n\
+                               const rr = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"py_call_attr\", function: {name_json}, property: String(prop), args}})));\n\
+                               if (!rr.ok) {{ throw new Error(rr.error ?? \"Python method call failed\"); }}\n\
+                               return rr.value;\n\
+                             }};\n\
+                           }}\n\
+                           return r.value;\n\
+                         }},\n\
+                         has(_t, prop) {{ return prop === \"__polyPyVar\" || typeof prop === \"string\"; }},\n\
+                         set(_t, prop, _val) {{ throw new Error(\"Python object attribute assignment from JS is not supported yet\"); }},\n\
+                         }})\n"
                     ));
                 }
                 _ => {
@@ -1836,6 +1969,180 @@ impl<'a> Repl<'a> {
         if let Some(vm) = self.vm {
             vm.as_mut().tick();
         }
+    }
+
+    /// Route an editor-mode buffer through the current language's evaluator.
+    fn eval_in_current_mode(&mut self, code: &[u8]) {
+        match self.mode {
+            ReplMode::Js => self.evaluate_and_print(code),
+            ReplMode::Python => {
+                let _ = self.python_eval_and_print(code);
+            }
+            ReplMode::Shell | ReplMode::Sql | ReplMode::C => self.eval_cheap_language(code),
+        }
+    }
+
+    /// Run `code` in `target` mode inline (`.py <code>` etc.) and restore the
+    /// previously active mode. State created by the inline eval persists in
+    /// the target language's session (Python globals, `__polyC`, `__polySql`).
+    fn eval_inline(&mut self, target: ReplMode, code: &[u8]) {
+        let prev = self.mode;
+        self.mode = target;
+        self.eval_in_current_mode(code);
+        self.mode = prev;
+    }
+
+    /// Evaluate one input in Shell / SQL / C mode by synthesizing a JS
+    /// snippet and running it through the REPL transform (top-level await,
+    /// `{ value: expr }` result wrapper). Shell runs Bun Shell in-process and
+    /// implements the in-process `poly` builtin (`poly js` / `poly python` /
+    /// `poly sql`); SQL runs against a session-persistent in-memory SQLite
+    /// database exposed as `globalThis.__polySql`; C compiles with embedded
+    /// TinyCC, accumulating source across inputs and exposing compiled
+    /// function symbols on `globalThis.__polyC`.
+    ///
+    /// The synthesized code must NOT wrap itself in an async IIFE — the REPL
+    /// transform wraps top-level `await` itself, and a hand-written IIFE as
+    /// the last expression only gets wrapped in `{ value: ... }` without ever
+    /// being awaited.
+    fn eval_cheap_language(&mut self, code: &[u8]) {
+        let code_str = String::from_utf8_lossy(code);
+        let json = serde_json::to_string(&code_str).unwrap_or_else(|_| "\"\"".into());
+        let js = match self.mode {
+            ReplMode::Shell => {
+                let trimmed = code_str.trim_start();
+                if let Some(rest) = trimmed.strip_prefix("poly ") {
+                    if let Some(expr) = rest.strip_prefix("js ") {
+                        let expr_json =
+                            serde_json::to_string(expr).unwrap_or_else(|_| "\"\"".into());
+                        format!("eval({expr_json})\n")
+                    } else if let Some(py_code) = rest.strip_prefix("python ") {
+                        let py_json =
+                            serde_json::to_string(py_code).unwrap_or_else(|_| "\"\"".into());
+                        format!(
+                            "const __r = JSON.parse(Bun.polyPythonCall(JSON.stringify({{kind: \"py_eval\", code: {py_json}}})));\n\
+                             if (!__r.ok) {{ throw new Error(__r.error ?? \"Python eval failed\"); }}\n\
+                             __r.value ?? undefined\n"
+                        )
+                    } else if let Some(q) = rest.strip_prefix("sql ") {
+                        let q_json = serde_json::to_string(q).unwrap_or_else(|_| "\"\"".into());
+                        format!(
+                            "typeof globalThis.__polySqlQuery === \"function\"\n\
+                             ? JSON.stringify(globalThis.__polySqlQuery({q_json}))\n\
+                             : \"error: SQL session not started (enter .sql mode first)\"\n"
+                        )
+                    } else {
+                        "\"usage: poly js <expr> | poly python <expr> | poly sql <query>\"\n"
+                            .to_string()
+                    }
+                } else {
+                    format!(
+                        "const {{ $ }} = await import(\"bun\");\n\
+                         const __out = await $({{ raw: [{json}] }}).nothrow();\n\
+                         __out.exitCode\n"
+                    )
+                }
+            }
+            ReplMode::Sql => format!(
+                "const {{ Database }} = await import(\"bun:sqlite\");\n\
+                 const g = globalThis;\n\
+                 if (!g.__polySql) {{\n\
+                   g.__polySql = new Database(\":memory:\");\n\
+                   g.__polySqlQuery = (sql) => g.__polySql.query(sql).all();\n\
+                   g.__polySqlExec = (sql) => {{ g.__polySql.exec(sql); return {{ ok: true }}; }};\n\
+                 }}\n\
+                 let __result;\n\
+                 try {{\n\
+                   const __stmt = g.__polySql.query({json});\n\
+                   __result = JSON.stringify(__stmt.all());\n\
+                 }} catch (__e) {{\n\
+                   console.error(String(__e));\n\
+                   __result = undefined;\n\
+                 }}\n\
+                 __result\n"
+            ),
+            ReplMode::C => format!(
+                "const {{ cc }} = await import(\"bun:ffi\");\n\
+                 const g = globalThis;\n\
+                 g.__polyCStmts = g.__polyCStmts ?? \"\";\n\
+                 g.__polyCDefs = g.__polyCDefs ?? \"\";\n\
+                 g.__polyC = g.__polyC ?? {{}};\n\
+                 const __path = (await import(\"node:os\")).tmpdir() + \"/poly-c-repl-\" + process.pid + \".c\";\n\
+                 const __pre = \"#include <stdio.h>\\n#include <stdlib.h>\\n#include <string.h>\\nint __poly_marker(void) {{ return 0; }}\\n\";\n\
+                 const __tmap = {{ int: \"i32\", \"unsigned int\": \"u32\", unsigned: \"u32\", long: \"i64\", \"unsigned long\": \"u64\", \"long long\": \"i64\", \"unsigned long long\": \"u64\", short: \"i16\", \"unsigned short\": \"u16\", char: \"i8\", \"unsigned char\": \"u8\", \"signed char\": \"i8\", float: \"f32\", double: \"f64\", size_t: \"usize\", ssize_t: \"isize\", int32_t: \"i32\", uint32_t: \"u32\", int64_t: \"i64\", uint64_t: \"u64\", int16_t: \"i16\", uint16_t: \"u16\", int8_t: \"i8\", uint8_t: \"u8\", void: \"void\" }};\n\
+                 const __ctoffi = (t) => {{ t = String(t).trim().replace(/\\s+/g, \" \"); if (t.includes(\"*\")) return \"ptr\"; return __tmap[t] ?? \"i32\"; }};\n\
+                 const __parseSigs = (src) => {{\n\
+                   const sigs = {{}};\n\
+                   const re = /(?:^|\\n)[ \\t]*(?:static[ \\t]+|extern[ \\t]+)?([A-Za-z_][A-Za-z0-9_ \\t]*\\**)[ \\t]+([A-Za-z_][A-Za-z0-9_]*)[ \\t]*\\(([^)]*)\\)[ \\t]*\\{{/g;\n\
+                   let m;\n\
+                   while ((m = re.exec(src)) !== null) {{\n\
+                     if (m[2].startsWith(\"__poly\")) continue;\n\
+                     const ret = m[1].includes(\"*\") ? \"ptr\" : (m[1].trim().split(/\\s+/).pop() ?? \"int\");\n\
+                     const params = m[3].split(\",\").map(p => p.trim()).filter(p => p !== \"\" && p !== \"void\");\n\
+                     sigs[m[2]] = {{ args: params.map(p => p.includes(\"*\") ? \"ptr\" : __ctoffi(p.split(/\\s+/)[0])), returns: __ctoffi(ret) }};\n\
+                   }}\n\
+                   return sigs;\n\
+                 }};\n\
+                 const __compile = async (src, syms) => {{ await Bun.write(__path, src); return cc({{ source: __path, symbols: Object.assign({{ __poly_marker: {{ args: [], returns: \"int\" }} }}, syms) }}); }};\n\
+                 const __in = {json};\n\
+                 const __isExpr = !(__in.trimEnd().endsWith(\";\") || __in.trimEnd().endsWith(\"}}\"));\n\
+                 const __ln = \"__poly_line_\" + (g.__polyLineN = (g.__polyLineN ?? 0) + 1);\n\
+                 const __lineFn = \"void \" + __ln + \"(void) {{\\n\" + __in + \"\\n}}\\n\";\n\
+                 let __result = undefined;\n\
+                 let __err = undefined;\n\
+                 let __out3 = undefined;\n\
+                 if (__isExpr) {{\n\
+                   // Expression: echo the value. int return first, double when a\n\
+                   // float literal is present (else int truncates 3.14*2 -> 6).\n\
+                   const __looksFloat = /[0-9]\\.[0-9]|[0-9][eE][+-]?[0-9]/.test(__in);\n\
+                   const __exprInt = \"int __poly_expr(void) {{ return (\" + __in + \"); }}\\n\";\n\
+                   const __exprDbl = \"double __poly_expr(void) {{ return (\" + __in + \"); }}\\n\";\n\
+                   const __syms = Object.assign({{ __poly_expr: {{ args: [], returns: \"int\" }} }}, __parseSigs(g.__polyCDefs));\n\
+                   const __symsD = Object.assign({{ __poly_expr: {{ args: [], returns: \"double\" }} }}, __parseSigs(g.__polyCDefs));\n\
+                   try {{\n\
+                     __result = await __compile(__pre + g.__polyCDefs + g.__polyCStmts + (__looksFloat ? __exprDbl : __exprInt), __looksFloat ? __symsD : __syms);\n\
+                     __out3 = __result.symbols.__poly_expr();\n\
+                   }} catch (e1) {{\n\
+                     try {{\n\
+                       __result = await __compile(__pre + g.__polyCDefs + g.__polyCStmts + (__looksFloat ? __exprInt : __exprDbl), __looksFloat ? __syms : __symsD);\n\
+                       __out3 = __result.symbols.__poly_expr();\n\
+                     }} catch (e2) {{ __err = String(e2); }}\n\
+                   }}\n\
+                 }} else {{\n\
+                   // Statement or declaration: declarations compile at file scope\n\
+                   // (state persists across inputs); everything else becomes a\n\
+                   // one-shot line function that is compiled with the whole\n\
+                   // accumulated source but only CALLED once, so side effects\n\
+                   // never repeat.\n\
+                   try {{\n\
+                     const __d = g.__polyCDefs + __in + \"\\n\";\n\
+                     __result = await __compile(__pre + __d + g.__polyCStmts, __parseSigs(__d));\n\
+                     g.__polyCDefs = __d;\n\
+                   }} catch (e1) {{\n\
+                     try {{\n\
+                       const __syms = Object.assign({{ [__ln]: {{ args: [], returns: \"void\" }} }}, __parseSigs(g.__polyCDefs));\n\
+                       __result = await __compile(__pre + g.__polyCDefs + g.__polyCStmts + __lineFn, __syms);\n\
+                       g.__polyCStmts += __lineFn;\n\
+                       __out3 = __result.symbols[__ln]();\n\
+                     }} catch (e2) {{ __err = String(e2); }}\n\
+                   }}\n\
+                   if (/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*(?:[+\\-*/%&|^]?=|\\+\\+|--)/.test(__in)) {{\n\
+                     console.error(\"note: assignments to C REPL variables don't persist across inputs (TinyCC recompiles each input); declare with an initializer or use a pure function\");\n\
+                   }}\n\
+                 }}\n\
+                 if (!__err) {{\n\
+                   for (const k of Object.keys(__result.symbols)) {{\n\
+                     if (!k.startsWith(\"__poly\")) g.__polyC[k] = __result.symbols[k];\n\
+                   }}\n\
+                   if (!g.__polyCCall) g.__polyCCall = (name, ...args) => {{ const fn = g.__polyC[name]; if (typeof fn !== \"function\") throw new Error(\"unknown C symbol: \" + name); return fn(...args); }};\n\
+                 }} else {{\n\
+                   console.error(__err);\n\
+                 }}\n\
+                 __out3\n"
+            ),
+            _ => return,
+        };
+        self.evaluate_and_print(js.as_bytes());
     }
 
     /// Evaluate code and copy the result to clipboard instead of printing it
@@ -2260,7 +2567,13 @@ impl<'a> Repl<'a> {
         // Print welcome message
         self.print(format_args!("Welcome to Poly v{}\n", VERSION));
         self.print(format_args!(
-            "JavaScript mode by default. Type {}.py{} for Python (RustPython), {}.js{} to switch back. {}.help{} for more info.\n\n",
+            "JavaScript mode by default. Type {}.py{} for Python (RustPython), {}.sh{} for Shell (Bun Shell), {}.sql{} for SQL (SQLite), {}.c{} for C (TinyCC), {}.js{} to switch back. {}.help{} for more info.\n\n",
+            Color::CYAN,
+            Color::RESET,
+            Color::CYAN,
+            Color::RESET,
+            Color::CYAN,
+            Color::RESET,
             Color::CYAN,
             Color::RESET,
             Color::CYAN,
@@ -2294,7 +2607,7 @@ impl<'a> Repl<'a> {
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
-                            self.evaluate_and_print(&code);
+                            self.eval_in_current_mode(&code);
                             self.editor_buffer = code;
                         }
                         self.editor_mode = false;
@@ -2483,35 +2796,55 @@ impl<'a> Repl<'a> {
             &line
         };
 
-        if self.mode == ReplMode::Python {
-            // Python mode: the evaluator reports incomplete input itself
-            // (open brackets / trailing block colon / backslash), without
-            // executing it. Complete input is evaluated immediately.
-            // Owned copy so the `&mut self` call below doesn't alias the
-            // multiline buffer borrow.
-            let full_code: Box<[u8]> = if self.in_multiline {
-                Box::<[u8]>::from(self.multiline_buffer.as_slice())
-            } else {
-                Box::<[u8]>::from(line.as_slice())
-            };
-            let incomplete = self.python_eval_and_print(&full_code);
-            if incomplete {
-                if !self.in_multiline {
-                    self.in_multiline = true;
-                    self.multiline_buffer.extend_from_slice(&line);
-                    self.multiline_buffer.push(b'\n');
+        match self.mode {
+            ReplMode::Python => {
+                // Python mode: the evaluator reports incomplete input itself
+                // (open brackets / trailing block colon / backslash), without
+                // executing it. Complete input is evaluated immediately.
+                // Owned copy so the `&mut self` call below doesn't alias the
+                // multiline buffer borrow.
+                let full_code: Box<[u8]> = if self.in_multiline {
+                    Box::<[u8]>::from(self.multiline_buffer.as_slice())
+                } else {
+                    Box::<[u8]>::from(line.as_slice())
+                };
+                let incomplete = self.python_eval_and_print(&full_code);
+                if incomplete {
+                    if !self.in_multiline {
+                        self.in_multiline = true;
+                        self.multiline_buffer.extend_from_slice(&line);
+                        self.multiline_buffer.push(b'\n');
+                    }
+                    self.line_editor.clear();
+                    self.refresh_line();
+                    return Ok(());
                 }
+                self.history.add(strings::trim(&full_code, b"\n"))?;
                 self.line_editor.clear();
+                self.multiline_buffer.clear();
+                self.in_multiline = false;
+                self.history.reset_position();
                 self.refresh_line();
                 return Ok(());
             }
-            self.history.add(strings::trim(&full_code, b"\n"))?;
-            self.line_editor.clear();
-            self.multiline_buffer.clear();
-            self.in_multiline = false;
-            self.history.reset_position();
-            self.refresh_line();
-            return Ok(());
+            // Shell / SQL / C: single-line evaluation through the
+            // synthesized-JS path. Multiline input is available via `.editor`.
+            ReplMode::Shell | ReplMode::Sql | ReplMode::C => {
+                let full_code: Box<[u8]> = if self.in_multiline {
+                    Box::<[u8]>::from(self.multiline_buffer.as_slice())
+                } else {
+                    Box::<[u8]>::from(line.as_slice())
+                };
+                self.history.add(strings::trim(&full_code, b"\n"))?;
+                self.eval_cheap_language(&full_code);
+                self.line_editor.clear();
+                self.multiline_buffer.clear();
+                self.in_multiline = false;
+                self.history.reset_position();
+                self.refresh_line();
+                return Ok(());
+            }
+            ReplMode::Js => {}
         }
 
         if is_incomplete_code(full_code) {

@@ -131,7 +131,7 @@ impl std::error::Error for PythonError {}
 /// Opaque request sent across the JSON bridge.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BridgeRequest {
-    pub kind: String, // "load" | "describe" | "call" | "run_file"
+    pub kind: String, // "load" | "describe" | "call" | "run_file" | "py_get_var" | "py_call_attr"
     #[serde(default)]
     pub module: String,
     #[serde(default)]
@@ -144,15 +144,22 @@ pub struct BridgeRequest {
     pub script_args: Vec<String>,
     #[serde(default)]
     pub referrer: String,
+    /// Attribute name for `py_get_var` / `py_call_attr`.
+    #[serde(default)]
+    pub property: String,
+    /// Source code for `py_eval`.
+    #[serde(default)]
+    pub code: String,
 }
 
 /// One variable exported from the Python REPL scope after evaluation.
-/// Functions are exported by name (the name is the cross-runtime handle,
-/// mirroring v1 module interop); other JSON-serializable values by value.
+/// Functions and arbitrary objects are exported by name (the name is the
+/// cross-runtime handle, mirroring v1 module interop); other
+/// JSON-serializable values by value.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReplExport {
     pub name: String,
-    /// "function" or "value".
+    /// "function", "value" or "object".
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<Value>,
@@ -190,6 +197,10 @@ pub struct BridgeResponse {
     pub exports: Option<ModuleExports>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<Value>,
+    /// `py_get_var`: the attribute value is callable (the JS side should
+    /// expose a function proxy backed by `py_call_attr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -414,6 +425,46 @@ def _check_host():
 # Install the root module
 js = _JSRoot()
 sys.modules['js'] = js
+
+
+# ---------------------------------------------------------------------------
+# poly — cross-language helpers for the secondary languages (C / SQL / Shell).
+# v1: thin wrappers over globalThis bridge functions exposed by the REPL:
+#   poly.c("add", 2, 3)   -> call a C function from the C REPL session
+#   poly.sql("SELECT ...") -> query the SQL REPL session database
+#   poly.sqlexec("...")    -> execute a SQL script (DDL / migrations)
+# Each call resolves the JS side by name at call time (no handles).
+# ---------------------------------------------------------------------------
+
+def _poly_call_js(name, args):
+    _check_host()
+    request = json.dumps({'kind': 'js_call_var', 'name': name, 'args': list(args)})
+    response_json = globals()['__poly_js_host_call'](request)
+    response = json.loads(response_json)
+    if not response.get('ok', False):
+        raise _js_error(response)
+    return response.get('value') if 'value' in response else None
+
+
+def c(name, *args):
+    """Call a C function defined in the C REPL session (via globalThis.__polyC)."""
+    return _poly_call_js('__polyCCall', [name, *args])
+
+
+def sql(query):
+    """Run a query against the SQL REPL session; returns rows as a list of dicts."""
+    return _poly_call_js('__polySqlQuery', [query])
+
+
+def sqlexec(script):
+    """Execute a SQL script (multi-statement) against the SQL REPL session."""
+    return _poly_call_js('__polySqlExec', [script])
+
+
+poly = sys.modules['poly'] = type(sys)('poly')
+poly.c = c
+poly.sql = sql
+poly.sqlexec = sqlexec
 "#;
 
 // ---------------------------------------------------------------------------
@@ -548,6 +599,13 @@ impl PythonRuntime {
             "run_file" => self.run_file_inner(&request),
             "import_js" => self.import_js(&request),
             "py_call_var" => Ok(self.py_call_var(&request.function, &request.args)),
+            "py_get_var" => Ok(self.py_get_var(&request.function, &request.property)),
+            "py_call_attr" => Ok(self.py_call_attr(
+                &request.function,
+                &request.property,
+                &request.args,
+            )),
+            "py_eval" => Ok(self.py_eval(&request.code)),
             other => Err(PythonError::new(format!("unknown request kind: {other}"))),
         }
     }
@@ -562,6 +620,7 @@ impl PythonRuntime {
             ok: true,
             exports: Some(exports),
             value: None,
+            callable: None,
             error: None,
             error_kind: None,
             traceback: None,
@@ -592,6 +651,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(format!("function not found: {}", request.function)),
                         error_kind: Some("ImportError".to_string()),
                         traceback: Some(render_exception(vm, &exception)),
@@ -612,6 +672,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(format!("argument conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
@@ -627,6 +688,7 @@ impl PythonRuntime {
                         ok: true,
                         exports: None,
                         value: Some(json_val),
+                        callable: None,
                         error: None,
                         error_kind: None,
                         traceback: None,
@@ -635,6 +697,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(format!("value conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
@@ -651,6 +714,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(msg.clone()),
                         error_kind: Some(kind.to_string()),
                         traceback: Some(msg),
@@ -713,6 +777,7 @@ impl PythonRuntime {
             ok: true,
             exports: None,
             value: Some(Value::Number((exit_code as i64).into())),
+            callable: None,
             error: None,
             error_kind: None,
             traceback: None,
@@ -877,6 +942,12 @@ impl PythonRuntime {
                     if name.starts_with('_') {
                         continue;
                     }
+                    // Modules leaked into the REPL scope by the embedded
+                    // `js` package bootstrap (`sys`, `json`, `js`, ...) are
+                    // implementation detail, not user variables.
+                    if &*value.class().name() == "module" {
+                        continue;
+                    }
                     if value.is_callable() {
                         // Skip JS proxies injected into this scope.
                         if value.get_attr("_poly_js_var", vm).is_ok() {
@@ -892,6 +963,16 @@ impl PythonRuntime {
                             name,
                             kind: "value".to_string(),
                             value: Some(json),
+                        });
+                    } else {
+                        // Arbitrary Python object (instance, module, ...):
+                        // export by name as a live proxy handle, mirroring
+                        // the function case — the JS side reads attributes
+                        // through `py_get_var` / `py_call_attr`.
+                        exports.push(ReplExport {
+                            name,
+                            kind: "object".to_string(),
+                            value: None,
                         });
                     }
                 }
@@ -921,6 +1002,7 @@ impl PythonRuntime {
                             ok: false,
                             exports: None,
                             value: None,
+                            callable: None,
                             error: Some(format!("unknown Python variable: {name}")),
                             error_kind: Some("NameError".to_string()),
                             traceback: None,
@@ -940,6 +1022,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(format!("argument conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
@@ -954,6 +1037,7 @@ impl PythonRuntime {
                         ok: true,
                         exports: None,
                         value: Some(json_val),
+                        callable: None,
                         error: None,
                         error_kind: None,
                         traceback: None,
@@ -962,6 +1046,7 @@ impl PythonRuntime {
                         ok: false,
                         exports: None,
                         value: None,
+                        callable: None,
                         error: Some(format!("value conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
@@ -971,6 +1056,7 @@ impl PythonRuntime {
                     ok: false,
                     exports: None,
                     value: None,
+                    callable: None,
                     error: Some(render_exception(vm, &exception)),
                     error_kind: Some("PythonError".to_string()),
                     traceback: Some(render_exception(vm, &exception)),
@@ -983,6 +1069,207 @@ impl PythonRuntime {
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    /// Read an attribute of a Python REPL-scope variable by name (JS ->
+    /// Python object proxy). Attribute values that are callable come back
+    /// with `callable: true` (the JS side exposes a function proxy backed by
+    /// `py_call_attr`); JSON-serializable values by value; anything else by
+    /// its `repr()` string.
+    fn py_get_var(&self, name: &str, property: &str) -> BridgeResponse {
+        let result = self.interpreter.enter(|vm| {
+            let value = {
+                let scope = self.repl_scope.lock();
+                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                    Some(v) => v,
+                    None => {
+                        return BridgeResponse {
+                            ok: false,
+                            exports: None,
+                            value: None,
+                            callable: None,
+                            error: Some(format!("unknown Python variable: {name}")),
+                            error_kind: Some("NameError".to_string()),
+                            traceback: None,
+                        }
+                    }
+                }
+            };
+
+            match value.get_attr(&vm.ctx.new_str(property.to_string()), vm) {
+                Ok(attr) => {
+                    if attr.is_callable() {
+                        BridgeResponse {
+                            ok: true,
+                            exports: None,
+                            value: None,
+                            callable: Some(true),
+                            error: None,
+                            error_kind: None,
+                            traceback: None,
+                        }
+                    } else {
+                        match py_value_to_json(vm, &attr) {
+                            Ok(json_val) => BridgeResponse {
+                                ok: true,
+                                exports: None,
+                                value: Some(json_val),
+                                callable: None,
+                                error: None,
+                                error_kind: None,
+                                traceback: None,
+                            },
+                            Err(_) => {
+                                // Not JSON-serializable: fall back to repr().
+                                let repr = attr
+                                    .repr(vm)
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|_| "<unprintable>".to_string());
+                                BridgeResponse {
+                                    ok: true,
+                                    exports: None,
+                                    value: Some(Value::String(repr)),
+                                    callable: None,
+                                    error: None,
+                                    error_kind: None,
+                                    traceback: None,
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(exception) => BridgeResponse {
+                    ok: false,
+                    exports: None,
+                    value: None,
+                    callable: None,
+                    error: Some(render_exception(vm, &exception)),
+                    error_kind: Some("AttributeError".to_string()),
+                    traceback: Some(render_exception(vm, &exception)),
+                },
+            }
+        });
+        result
+    }
+
+    /// Call a method of a Python REPL-scope variable by name (JS -> Python
+    /// object proxy). Resolves `getattr(scope[name], property)` then calls it
+    /// with JSON arguments — mirrors `py_call_var` for attributes.
+    fn py_call_attr(&self, name: &str, property: &str, args: &[Value]) -> BridgeResponse {
+        let result = self.interpreter.enter(|vm| {
+            let value = {
+                let scope = self.repl_scope.lock();
+                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                    Some(v) => v,
+                    None => {
+                        return BridgeResponse {
+                            ok: false,
+                            exports: None,
+                            value: None,
+                            callable: None,
+                            error: Some(format!("unknown Python variable: {name}")),
+                            error_kind: Some("NameError".to_string()),
+                            traceback: None,
+                        }
+                    }
+                }
+            };
+
+            let attr = match value.get_attr(&vm.ctx.new_str(property.to_string()), vm) {
+                Ok(attr) => attr,
+                Err(exception) => {
+                    return BridgeResponse {
+                        ok: false,
+                        exports: None,
+                        value: None,
+                        callable: None,
+                        error: Some(render_exception(vm, &exception)),
+                        error_kind: Some("AttributeError".to_string()),
+                        traceback: Some(render_exception(vm, &exception)),
+                    }
+                }
+            };
+
+            let py_args: Vec<_> = match args
+                .iter()
+                .map(|v| json_value_to_py(vm, v))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(args) => args,
+                Err(e) => {
+                    return BridgeResponse {
+                        ok: false,
+                        exports: None,
+                        value: None,
+                        callable: None,
+                        error: Some(format!("argument conversion error: {e}")),
+                        error_kind: Some("TypeError".to_string()),
+                        traceback: None,
+                    }
+                }
+            };
+
+            match attr.call(FuncArgs::from(py_args), vm) {
+                Ok(result_value) => match py_value_to_json(vm, &result_value) {
+                    Ok(json_val) => BridgeResponse {
+                        ok: true,
+                        exports: None,
+                        value: Some(json_val),
+                        callable: None,
+                        error: None,
+                        error_kind: None,
+                        traceback: None,
+                    },
+                    Err(e) => BridgeResponse {
+                        ok: false,
+                        exports: None,
+                        value: None,
+                        callable: None,
+                        error: Some(format!("value conversion error: {e}")),
+                        error_kind: Some("TypeError".to_string()),
+                        traceback: None,
+                    },
+                },
+                Err(exception) => BridgeResponse {
+                    ok: false,
+                    exports: None,
+                    value: None,
+                    callable: None,
+                    error: Some(render_exception(vm, &exception)),
+                    error_kind: Some("PythonError".to_string()),
+                    traceback: Some(render_exception(vm, &exception)),
+                },
+            }
+        });
+        result
+    }
+
+    /// Evaluate a snippet against the persistent REPL scope (Shell mode's
+    /// `poly python <expr>`). Returns the `repr()` of the expression result
+    /// (None for statements / None results). Exports are not synced here —
+    /// entering Python mode syncs the full scope.
+    fn py_eval(&self, code: &str) -> BridgeResponse {
+        let result = self.repl_eval(code, &[]);
+        if let Some(error) = result.error {
+            return BridgeResponse {
+                ok: false,
+                exports: None,
+                value: None,
+                callable: None,
+                error: Some(error),
+                error_kind: Some("PythonError".to_string()),
+                traceback: None,
+            };
+        }
+        BridgeResponse {
+            ok: true,
+            exports: None,
+            value: result.value.map(Value::String),
+            callable: None,
+            error: None,
+            error_kind: None,
+            traceback: None,
+        }
+    }
 
     /// Load a module by path, sharing the scope if already loaded.
     fn load_or_share(
@@ -1343,6 +1630,9 @@ pub fn handle_bridge_request(request_json: &str) -> Result<String, PythonError> 
     if request.module.is_empty()
         && request.kind != "import_js"
         && request.kind != "py_call_var"
+        && request.kind != "py_get_var"
+        && request.kind != "py_call_attr"
+        && request.kind != "py_eval"
     {
         return Err(PythonError::new("module path cannot be empty"));
     }
@@ -1357,6 +1647,7 @@ pub fn handle_bridge_request(request_json: &str) -> Result<String, PythonError> 
                 ok: false,
                 exports: None,
                 value: None,
+                callable: None,
                 error: Some(e.message().to_string()),
                 error_kind: Some(format!("{:?}", e.kind())),
                 traceback: None,
@@ -1376,6 +1667,8 @@ pub fn run_file(path: &Path, args: &[String]) -> Result<u32, PythonError> {
         args: Vec::new(),
         script_args: args.to_vec(),
         referrer: String::new(),
+        property: String::new(),
+        code: String::new(),
     };
 
     let response = RUNTIME.with(|runtime| runtime.run_file_inner(&request))?;
@@ -1410,6 +1703,8 @@ pub fn describe_module(module_path: &str) -> Result<String, PythonError> {
         args: Vec::new(),
         script_args: Vec::new(),
         referrer: String::new(),
+        property: String::new(),
+        code: String::new(),
     };
 
     let response = RUNTIME.with(|runtime| runtime.describe_module(&request))?;
@@ -1475,6 +1770,8 @@ mod tests {
                 args: Vec::new(),
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             RUNTIME.with(|r| r.handle_request(load_req)).unwrap();
 
@@ -1486,6 +1783,8 @@ mod tests {
                 args,
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             RUNTIME.with(|r| r.handle_request(call_req)).unwrap()
         })
@@ -1504,6 +1803,8 @@ mod tests {
                 args: Vec::new(),
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             let response = RUNTIME.with(|r| r.handle_request(request)).unwrap();
             response.exports.expect("expected exports")
@@ -1529,6 +1830,8 @@ mod tests {
                 args: Vec::new(),
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             let _resp1 = RUNTIME.with(|r| r.handle_request(req1)).unwrap();
 
@@ -1541,6 +1844,8 @@ mod tests {
                 args: vec![],
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             let resp2 = RUNTIME.with(|r| r.handle_request(req2)).unwrap();
             assert!(resp2.ok, "second call should succeed: {:?}", resp2.error);
@@ -1635,6 +1940,8 @@ mod tests {
                 args: Vec::new(),
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
 
             let response = RUNTIME.with(|r| r.handle_request(request));

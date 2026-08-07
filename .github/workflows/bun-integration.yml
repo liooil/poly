@@ -151,6 +151,54 @@ jobs:
               throw "TypeScript to Python smoke test failed with exit code $LASTEXITCODE."
           }
 
+      - name: Smoke-test Shell entry (Bun Shell, in-process)
+        shell: pwsh
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
+          & $poly poly/examples/shell_demo.sh
+          if ($LASTEXITCODE -ne 0) {
+              throw "Shell smoke test failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Smoke-test SQL entry (in-memory SQLite)
+        shell: pwsh
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
+          & $poly poly/examples/sql_demo.sql
+          if ($LASTEXITCODE -ne 0) {
+              throw "SQL smoke test failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Smoke-test C entry (embedded TinyCC)
+        shell: pwsh
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
+          & $poly poly/examples/c_demo.c
+          if ($LASTEXITCODE -ne 7) {
+              throw "C smoke test failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Smoke-test unified REPL (Shell / SQL / C mode switching)
+        shell: pwsh
+        run: |
+          $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
+          $input = @(
+              ".sh",
+              "echo repl-shell-ok",
+              ".sql",
+              "SELECT 42 AS x",
+              ".c",
+              'printf("repl-c-ok\n");',
+              ".exit"
+          )
+          $output = $input | & $poly repl 2>&1
+          if ($LASTEXITCODE -ne 0) {
+              throw "REPL smoke test failed with exit code $LASTEXITCODE."
+          }
+          if (-not ($output -match "repl-shell-ok" -and $output -match '"x":42' -and $output -match "repl-c-ok")) {
+              throw "REPL smoke test output missing expected results."
+          }
+
       - name: Upload Windows crash diagnostics
         if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

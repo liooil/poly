@@ -28,6 +28,8 @@ fn calls_python_and_returns_structured_json() {
                 args: Vec::new(),
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
             call_json(&serde_json::to_string(&load_request).unwrap()).unwrap();
 
@@ -39,6 +41,8 @@ fn calls_python_and_returns_structured_json() {
                 args: vec![Value::from(20), Value::from(22)],
                 script_args: Vec::new(),
                 referrer: String::new(),
+                property: String::new(),
+                code: String::new(),
             };
 
             let response = call_json(&serde_json::to_string(&request).unwrap()).unwrap();

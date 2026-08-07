@@ -5782,6 +5782,12 @@ pub(crate) mod __gated_printer {
                                 Loader::Py => {
                                     self.print_whitespacer(ws!(b" with { type: \"python\" }"))
                                 }
+                                Loader::Sql => {
+                                    self.print_whitespacer(ws!(b" with { type: \"sql\" }"))
+                                }
+                                Loader::C => {
+                                    self.print_whitespacer(ws!(b" with { type: \"c\" }"))
+                                }
                             }
                         }
                     }
@@ -5823,6 +5829,8 @@ pub(crate) mod __gated_printer {
                                         Loader::Json5 => FP::host_defined(mi.str(b"json5")),
                                         Loader::Md => FP::host_defined(mi.str(b"md")),
                                         Loader::Py => FP::host_defined(mi.str(b"python")),
+                                        Loader::Sql => FP::host_defined(mi.str(b"sql")),
+                                        Loader::C => FP::host_defined(mi.str(b"c")),
                                     }
                                 } else {
                                     FP::None
