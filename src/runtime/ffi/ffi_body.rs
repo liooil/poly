@@ -276,6 +276,8 @@ impl Default for CompileC {
 enum Source {
     File(ZBox),
     Files(Vec<ZBox>),
+    /// Inline C source text (the `code` option) — compiled without a file.
+    String(ZBox),
 }
 
 impl Source {
@@ -283,6 +285,7 @@ impl Source {
         match self {
             Source::File(f) => f,
             Source::Files(files) => &files[0],
+            Source::String(code) => code,
         }
     }
 
@@ -307,6 +310,13 @@ impl Source {
                         .map_err(|_| crate::Error::CompilationError)?;
                     *current_file_for_errors = ZBox::from_bytes(b"");
                 }
+            }
+            Source::String(code) => {
+                *current_file_for_errors = ZBox::from_bytes(b"<cc>");
+                state
+                    .compile_string(code)
+                    .map_err(|_| crate::Error::CompilationError)?;
+                *current_file_for_errors = ZBox::from_bytes(b"");
             }
         }
         Ok(())
@@ -1166,6 +1176,22 @@ impl FFI {
                 let source_path = source_value.get_zig_string(global_this)?.to_owned_slice_z();
                 compile_c.source = Source::File(source_path);
             }
+        }
+
+        // Inline C source text — compiled directly, no temp file. Takes
+        // precedence over `source` (the REPL compiles accumulated buffers).
+        if let Some(code_value) =
+            object.get_own(global_this, &bun_core::String::borrow_utf8(b"code"))?
+        {
+            if !code_value.is_string() {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"code",
+                    b"string",
+                    code_value,
+                ));
+            }
+            let code = code_value.get_zig_string(global_this)?.to_owned_slice_z();
+            compile_c.source = Source::String(code);
         }
 
         if global_this.has_exception() {

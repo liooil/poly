@@ -212,18 +212,28 @@ function cc(options) {
     throw new Error("Expected options to be an object");
   }
 
-  let path = options?.source;
-  if (!path) {
-    throw new Error("Expected source to be a string to a file path");
-  }
-  if ($isJSArray(path)) {
-    for (let i = 0; i < path.length; i++) {
-      path[i] = normalizePath(path[i]);
+  let displayName;
+  if (options.code !== undefined) {
+    // Inline C source text — compiled directly by TinyCC, no temp file.
+    if (typeof options.code !== "string") {
+      throw new Error("Expected code to be a string of C source code");
     }
+    displayName = "<cc>";
   } else {
-    path = normalizePath(path);
+    let path = options?.source;
+    if (!path) {
+      throw new Error("Expected source to be a string to a file path");
+    }
+    if ($isJSArray(path)) {
+      for (let i = 0; i < path.length; i++) {
+        path[i] = normalizePath(path[i]);
+      }
+    } else {
+      path = normalizePath(path);
+    }
+    options.source = path;
+    displayName = path;
   }
-  options.source = path;
 
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
@@ -240,7 +250,9 @@ function cc(options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        displayName.includes("/")
+          ? `${key} (${displayName.split("/").pop()})`
+          : `${key} (${displayName})`,
       );
     } else {
       // consistentcy
