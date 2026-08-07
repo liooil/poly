@@ -998,7 +998,7 @@ impl PythonRuntime {
     /// arguments (JS -> Python). The name is resolved on every call, so it
     /// always refers to the current binding.
     fn py_call_var(&self, name: &str, args: &[Value]) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let func = {
                 let scope = self.repl_scope.lock();
                 match scope
@@ -1071,8 +1071,7 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -1085,7 +1084,7 @@ impl PythonRuntime {
     /// `py_call_attr`); JSON-serializable values by value; anything else by
     /// its `repr()` string.
     fn py_get_var(&self, name: &str, property: &str) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let value = {
                 let scope = self.repl_scope.lock();
                 match scope
@@ -1159,15 +1158,14 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     /// Call a method of a Python REPL-scope variable by name (JS -> Python
     /// object proxy). Resolves `getattr(scope[name], property)` then calls it
     /// with JSON arguments — mirrors `py_call_var` for attributes.
     fn py_call_attr(&self, name: &str, property: &str, args: &[Value]) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let value = {
                 let scope = self.repl_scope.lock();
                 match scope
@@ -1254,8 +1252,7 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     /// Evaluate a snippet against the persistent REPL scope (Shell mode's
