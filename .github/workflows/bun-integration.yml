@@ -174,19 +174,14 @@ jobs:
         shell: pwsh
         run: |
           $poly = if ($IsWindows) { ".\dist\poly.exe" } else { "./dist/poly" }
-          Write-Host "EAP=$ErrorActionPreference"
-          $env:POLY_TRACE = "1"
-          $out1 = & $poly poly/examples/c_demo.c 2>&1
-          $c1 = $LASTEXITCODE
-          Write-Host "C_DEMO_EXIT=$c1"
-          $out1 | ForEach-Object { Write-Host "C_DEMO> $_" }
-          $tmp7 = Join-Path $env:RUNNER_TEMP "ret7.c"
-          Set-Content -Path $tmp7 -Value "int main(void) { return 7; }"
-          $out3 = & $poly $tmp7 2>&1
-          $c3 = $LASTEXITCODE
-          Write-Host "C_RET7_EXIT=$c3"
-          $out3 | ForEach-Object { Write-Host "C_RET7> $_" }
-          if ($c1 -ne 7) { throw "C smoke test failed with exit code $c1." }
+          & $poly poly/examples/c_demo.c
+          if ($LASTEXITCODE -ne 7) {
+              throw "C smoke test failed with exit code $LASTEXITCODE."
+          }
+          # The runner appends `exit $LASTEXITCODE` to pwsh steps, and a
+          # dot-sourced `exit 7` exits 1, so reset the code after the check
+          # passes or the step fails despite poly returning 7.
+          $LASTEXITCODE = 0
 
       - name: Smoke-test unified REPL (Shell / SQL / C mode switching)
         shell: pwsh
