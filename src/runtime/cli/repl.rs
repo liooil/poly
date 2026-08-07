@@ -2067,7 +2067,6 @@ impl<'a> Repl<'a> {
                  g.__polyCStmts = g.__polyCStmts ?? \"\";\n\
                  g.__polyCDefs = g.__polyCDefs ?? \"\";\n\
                  g.__polyC = g.__polyC ?? {{}};\n\
-                 const __path = (await import(\"node:os\")).tmpdir() + \"/poly-c-repl-\" + process.pid + \".c\";\n\
                  const __pre = \"#include <stdio.h>\\n#include <stdlib.h>\\n#include <string.h>\\nint __poly_marker(void) {{ return 0; }}\\n\";\n\
                  const __tmap = {{ int: \"i32\", \"unsigned int\": \"u32\", unsigned: \"u32\", long: \"i64\", \"unsigned long\": \"u64\", \"long long\": \"i64\", \"unsigned long long\": \"u64\", short: \"i16\", \"unsigned short\": \"u16\", char: \"i8\", \"unsigned char\": \"u8\", \"signed char\": \"i8\", float: \"f32\", double: \"f64\", size_t: \"usize\", ssize_t: \"isize\", int32_t: \"i32\", uint32_t: \"u32\", int64_t: \"i64\", uint64_t: \"u64\", int16_t: \"i16\", uint16_t: \"u16\", int8_t: \"i8\", uint8_t: \"u8\", void: \"void\" }};\n\
                  const __ctoffi = (t) => {{ t = String(t).trim().replace(/\\s+/g, \" \"); if (t.includes(\"*\")) return \"ptr\"; return __tmap[t] ?? \"i32\"; }};\n\
@@ -2083,7 +2082,7 @@ impl<'a> Repl<'a> {
                    }}\n\
                    return sigs;\n\
                  }};\n\
-                 const __compile = async (src, syms) => {{ await Bun.write(__path, src); return cc({{ source: __path, symbols: Object.assign({{ __poly_marker: {{ args: [], returns: \"int\" }} }}, syms) }}); }};\n\
+                 const __compile = (src, syms) => cc({{ code: src, symbols: Object.assign({{ __poly_marker: {{ args: [], returns: \"int\" }} }}, syms) }});\n\
                  const __in = {json};\n\
                  const __isExpr = !(__in.trimEnd().endsWith(\";\") || __in.trimEnd().endsWith(\"}}\"));\n\
                  const __ln = \"__poly_line_\" + (g.__polyLineN = (g.__polyLineN ?? 0) + 1);\n\
