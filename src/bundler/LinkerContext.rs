@@ -2977,7 +2977,8 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Md
                         | Loader::Py
                         | Loader::Sql
-                        | Loader::C => {
+                        | Loader::C
+                        | Loader::Rs => {
                             log.add_error_fmt(
                                 Some(source),
                                 record.range.loc,

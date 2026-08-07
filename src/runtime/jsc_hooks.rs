@@ -3420,6 +3420,50 @@ fn transpile_source_code_inner(
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // .rs — Poly Rust interpreter: entrypoints become a bootstrap module
+        // that runs the source in-process via `Bun.polyRustRun` (no rustc,
+        // no generated executables). Importing `.rs` modules is not supported
+        // in the experimental first phase.
+        // ────────────────────────────────────────────────────────────────────
+        L::Rs => {
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            if global_object.is_null() {
+                return Err(crate::Error::NotSupported);
+            }
+            // SAFETY: null-checked above; `global_object` is the live
+            // per-thread global.
+            let global = unsafe { &*global_object };
+            let module_path = String::from_utf8_lossy(path.text).into_owned();
+
+            let hash = bun_watcher::Watcher::get_hash(path.text);
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
+            let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+            if is_main {
+                let module_json = serde_json::to_string(&module_path).unwrap_or_else(|_| "\"\"".into());
+                let bootstrap = format!(
+                    "const __resp = JSON.parse(Bun.polyRustRun(JSON.stringify({{path: {module_json}, args: process.argv.slice(2)}})));\n\
+                     process.exit(__resp.exit_code ?? 1);\n"
+                );
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    source_code: bun_core::String::clone_utf8(bootstrap.as_bytes()),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::Esm,
+                    ..Default::default()
+                }));
+            }
+
+            // Non-entry `.rs` imports are not supported yet.
+            return Err(global
+                .throw_type_error(format_args!(
+                    "cannot import Rust module `{}`: only `.rs` entrypoints are supported in the Poly Rust runtime",
+                    module_path
+                ))
+                .into());
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // .html
         // ────────────────────────────────────────────────────────────────────
         L::Html => {

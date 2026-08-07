@@ -293,6 +293,7 @@ pub mod api {
         md = 21,
         py = 22,
         xml = 23,
+        rs = 24,
     }
 
     impl Loader {
@@ -325,6 +326,7 @@ pub mod api {
                 21 => Loader::md,
                 22 => Loader::py,
                 23 => Loader::xml,
+                24 => Loader::rs,
                 _ => Loader::_none,
             }
         }

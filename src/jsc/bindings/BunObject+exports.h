@@ -67,6 +67,7 @@
     macro(nanoseconds) \
     macro(openInEditor) \
     macro(polyPythonCall) \
+    macro(polyRustRun) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \

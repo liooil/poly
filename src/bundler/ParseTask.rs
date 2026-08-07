@@ -1294,7 +1294,7 @@ pub mod parse_worker {
             // v1 interop does not bundle `.py` modules (see
             // poly/docs/language-interop-v1.md); Bun.build support is a
             // later bundle-phase milestone.
-            Loader::Py => {
+            Loader::Py | Loader::Rs => {
                 return Err(crate::Error::ParserError);
             }
             // `.sql` / `.c` are runtime entrypoints only; Bun.build support

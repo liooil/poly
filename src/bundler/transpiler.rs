@@ -1803,7 +1803,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Html
             | options::Loader::Py
             | options::Loader::Sql
-            | options::Loader::C => parse_unsupported_loader(loader, &path),
+            | options::Loader::C
+            | options::Loader::Rs => parse_unsupported_loader(loader, &path),
         }
 
         None
@@ -2986,9 +2987,9 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Napi => {
                 output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
             }
-            // v1 interop does not bundle `.py` / `.sql` / `.c` modules;
+            // v1 interop does not bundle `.py` / `.sql` / `.c` / `.rs` modules;
             // Bun.build support is a later bundle-phase milestone.
-            options::Loader::Py | options::Loader::Sql | options::Loader::C => {
+            options::Loader::Py | options::Loader::Sql | options::Loader::C | options::Loader::Rs => {
                 return Err(crate::Error::ParserError);
             }
         }

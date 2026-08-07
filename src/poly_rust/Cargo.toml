@@ -1,0 +1,18 @@
+[package]
+name = "poly_rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+description = "Experimental Rust source interpreter for the Polyglot Bun fork"
+
+[dependencies]
+ra_ap_syntax = "0.0.345"
+text-size = "1.1"
+
+[lints.clippy]
+# poly_rust is a standalone embedded crate outside Bun's allocator/IO
+# stack; std collections, std::fs and std::env are appropriate here.
+disallowed_methods = "allow"
+disallowed_types = "allow"
+disallowed_macros = "allow"

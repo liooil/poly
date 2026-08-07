@@ -94,6 +94,7 @@ members = [
   "src/output",
   "src/runtime",
   "src/poly_python",
+  "src/poly_rust",
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
@@ -454,6 +455,7 @@ bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_runtime = { path = "src/runtime", default-features = false }
 poly_python = { path = "src/poly_python" }
+poly_rust = { path = "src/poly_rust" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }

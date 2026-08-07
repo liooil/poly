@@ -5880,6 +5880,10 @@ pub(crate) mod __gated_printer {
                                 Loader::C => {
                                     self.print_whitespacer(ws!(b" with { type: \"c\" }"))
                                 }
+                                Loader::Rs => {
+                                    self.print_whitespacer(ws!(b" with { type: \"rust\" }"))
+                                }
+                                }
                             }
                         }
                     }
@@ -5924,6 +5928,7 @@ pub(crate) mod __gated_printer {
                                         Loader::Py => FP::host_defined(mi.str(b"python")),
                                         Loader::Sql => FP::host_defined(mi.str(b"sql")),
                                         Loader::C => FP::host_defined(mi.str(b"c")),
+                                        Loader::Rs => FP::host_defined(mi.str(b"rust")),
                                     }
                                 } else {
                                     FP::None
