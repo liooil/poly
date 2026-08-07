@@ -5883,7 +5883,6 @@ pub(crate) mod __gated_printer {
                                 Loader::Rs => {
                                     self.print_whitespacer(ws!(b" with { type: \"rust\" }"))
                                 }
-                                }
                             }
                         }
                     }

@@ -455,6 +455,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::md => "md",
         L::py => "py",
         L::xml => "xml",
+        L::rs => "rs",
         L::_none => "_none",
     }
 }

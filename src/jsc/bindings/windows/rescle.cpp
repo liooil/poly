@@ -33,8 +33,10 @@
 #include "rescle.h"
 
 #include <atlstr.h>
-#include <sstream> // wstringstream
+#include <codecvt>
+#include <fstream>
 #include <iomanip> // setw, setfill
+#include <sstream> // wstringstream
 
 namespace rescle {
 
