@@ -667,6 +667,13 @@ Python (embedded RustPython):
   <b><magenta>run<r>       <d>./app.py<r>           Python entrypoints run inside the full runtime, so
                                       Python can import JavaScript modules via js.import_module()
 
+Shell (Bun Shell, in-process):
+  <b><magenta>app.sh<r>                       Run a Shell script in-process (same as <b>poly run app.sh<r>)
+  <b><magenta>app.sql<r>                      Run a SQL script against an in-memory SQLite database
+  <b><magenta>app.c<r>                        Compile C with embedded TinyCC and run <b>main()<r> in-process
+                                      (the entry file must define <b>int main(void)<r>; its return
+                                      value becomes the exit code)
+
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
 "),
                 $($extra,)*

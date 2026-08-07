@@ -1258,6 +1258,11 @@ pub mod parse_worker {
             Loader::Py => {
                 return Err(crate::Error::ParserError);
             }
+            // `.sql` / `.c` are runtime entrypoints only; Bun.build support
+            // is a later bundle-phase milestone.
+            Loader::Sql | Loader::C => {
+                return Err(crate::Error::ParserError);
+            }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
 

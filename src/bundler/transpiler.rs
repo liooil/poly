@@ -1810,7 +1810,9 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Sqlite
             | options::Loader::SqliteEmbedded
             | options::Loader::Html
-            | options::Loader::Py => parse_unsupported_loader(loader, &path),
+            | options::Loader::Py
+            | options::Loader::Sql
+            | options::Loader::C => parse_unsupported_loader(loader, &path),
         }
 
         None
@@ -2964,9 +2966,9 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Napi => {
                 output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
             }
-            // v1 interop does not bundle `.py` modules; Bun.build support is
-            // a later bundle-phase milestone.
-            options::Loader::Py => {
+            // v1 interop does not bundle `.py` / `.sql` / `.c` modules;
+            // Bun.build support is a later bundle-phase milestone.
+            options::Loader::Py | options::Loader::Sql | options::Loader::C => {
                 return Err(crate::Error::ParserError);
             }
         }
