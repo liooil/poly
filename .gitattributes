@@ -22,6 +22,11 @@
 # Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
 *.patch text eol=lf
 *.ps1 text eol=lf
+# Bun Shell chokes on CRLF in control-flow keywords (`then\r`), and the
+# RustPython/SQLite entry loaders should see LF too.
+*.sh text eol=lf
+*.sql text eol=lf
+*.py text eol=lf
 
 *.lockb binary diff=lockb
 

@@ -600,11 +600,9 @@ impl PythonRuntime {
             "import_js" => self.import_js(&request),
             "py_call_var" => Ok(self.py_call_var(&request.function, &request.args)),
             "py_get_var" => Ok(self.py_get_var(&request.function, &request.property)),
-            "py_call_attr" => Ok(self.py_call_attr(
-                &request.function,
-                &request.property,
-                &request.args,
-            )),
+            "py_call_attr" => {
+                Ok(self.py_call_attr(&request.function, &request.property, &request.args))
+            }
             "py_eval" => Ok(self.py_eval(&request.code)),
             other => Err(PythonError::new(format!("unknown request kind: {other}"))),
         }
@@ -835,12 +833,20 @@ impl PythonRuntime {
                         Some(v) => v,
                         None => continue,
                     },
-                    _ => match export.value.as_ref().and_then(|v| json_value_to_py(vm, v).ok()) {
+                    _ => match export
+                        .value
+                        .as_ref()
+                        .and_then(|v| json_value_to_py(vm, v).ok())
+                    {
                         Some(v) => v,
                         None => continue,
                     },
                 };
-                if scope.globals.set_item(export.name.as_str(), py_value, vm).is_err() {
+                if scope
+                    .globals
+                    .set_item(export.name.as_str(), py_value, vm)
+                    .is_err()
+                {
                     return ReplEvalResult {
                         incomplete: false,
                         value: None,
@@ -992,10 +998,13 @@ impl PythonRuntime {
     /// arguments (JS -> Python). The name is resolved on every call, so it
     /// always refers to the current binding.
     fn py_call_var(&self, name: &str, args: &[Value]) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let func = {
                 let scope = self.repl_scope.lock();
-                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                match scope
+                    .as_ref()
+                    .and_then(|s| s.globals.get_item(name, vm).ok())
+                {
                     Some(f) => f,
                     None => {
                         return BridgeResponse {
@@ -1006,7 +1015,7 @@ impl PythonRuntime {
                             error: Some(format!("unknown Python variable: {name}")),
                             error_kind: Some("NameError".to_string()),
                             traceback: None,
-                        }
+                        };
                     }
                 }
             };
@@ -1026,7 +1035,7 @@ impl PythonRuntime {
                         error: Some(format!("argument conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
-                    }
+                    };
                 }
             };
 
@@ -1062,8 +1071,7 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -1076,10 +1084,13 @@ impl PythonRuntime {
     /// `py_call_attr`); JSON-serializable values by value; anything else by
     /// its `repr()` string.
     fn py_get_var(&self, name: &str, property: &str) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let value = {
                 let scope = self.repl_scope.lock();
-                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                match scope
+                    .as_ref()
+                    .and_then(|s| s.globals.get_item(name, vm).ok())
+                {
                     Some(v) => v,
                     None => {
                         return BridgeResponse {
@@ -1090,7 +1101,7 @@ impl PythonRuntime {
                             error: Some(format!("unknown Python variable: {name}")),
                             error_kind: Some("NameError".to_string()),
                             traceback: None,
-                        }
+                        };
                     }
                 }
             };
@@ -1147,18 +1158,20 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     /// Call a method of a Python REPL-scope variable by name (JS -> Python
     /// object proxy). Resolves `getattr(scope[name], property)` then calls it
     /// with JSON arguments — mirrors `py_call_var` for attributes.
     fn py_call_attr(&self, name: &str, property: &str, args: &[Value]) -> BridgeResponse {
-        let result = self.interpreter.enter(|vm| {
+        self.interpreter.enter(|vm| {
             let value = {
                 let scope = self.repl_scope.lock();
-                match scope.as_ref().and_then(|s| s.globals.get_item(name, vm).ok()) {
+                match scope
+                    .as_ref()
+                    .and_then(|s| s.globals.get_item(name, vm).ok())
+                {
                     Some(v) => v,
                     None => {
                         return BridgeResponse {
@@ -1169,7 +1182,7 @@ impl PythonRuntime {
                             error: Some(format!("unknown Python variable: {name}")),
                             error_kind: Some("NameError".to_string()),
                             traceback: None,
-                        }
+                        };
                     }
                 }
             };
@@ -1185,7 +1198,7 @@ impl PythonRuntime {
                         error: Some(render_exception(vm, &exception)),
                         error_kind: Some("AttributeError".to_string()),
                         traceback: Some(render_exception(vm, &exception)),
-                    }
+                    };
                 }
             };
 
@@ -1204,7 +1217,7 @@ impl PythonRuntime {
                         error: Some(format!("argument conversion error: {e}")),
                         error_kind: Some("TypeError".to_string()),
                         traceback: None,
-                    }
+                    };
                 }
             };
 
@@ -1239,8 +1252,7 @@ impl PythonRuntime {
                     traceback: Some(render_exception(vm, &exception)),
                 },
             }
-        });
-        result
+        })
     }
 
     /// Evaluate a snippet against the persistent REPL scope (Shell mode's

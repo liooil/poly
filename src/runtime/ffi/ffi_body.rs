@@ -671,6 +671,13 @@ impl CompileC {
             }
         }
 
+        #[cfg(windows)]
+        if let Some(win32_dir) = CompilerRT::win32_dir() {
+            if state.add_sys_include_path(win32_dir).is_err() {
+                bun_output::scoped_log!(TCC, "TinyCC failed to add win32 sysinclude path");
+            }
+        }
+
         #[cfg(target_os = "macos")]
         {
             let mut pathbuf = PathBuffer::uninit();
@@ -2349,6 +2356,8 @@ struct CompilerRT;
 // `static mut` + leak.
 static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+#[cfg(windows)]
+static COMPILER_RT_WIN32_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2373,6 +2382,98 @@ impl CompilerRtSources {
             "js_native_api_types.h",
             include_bytes!("../napi/js_native_api_types.h"),
         ),
+    ];
+
+    // tcc's bundled win32 headers, staged alongside the compiler rt dir so
+    // cc() on Windows can resolve `<stdio.h>` / `<stdlib.h>` / `<windows.h>`
+    // like the system headers tcc finds on Linux/macOS. Mirrors
+    // vendor/tinycc/win32/include (keep in sync when the vendored fork bumps).
+    #[cfg(windows)]
+    const WIN32_HEADERS: &'static [(&'static str, &'static [u8])] = &[
+        ("_mingw.h", include_bytes!("../../../vendor/tinycc/win32/include/_mingw.h")),
+        ("assert.h", include_bytes!("../../../vendor/tinycc/win32/include/assert.h")),
+        ("conio.h", include_bytes!("../../../vendor/tinycc/win32/include/conio.h")),
+        ("ctype.h", include_bytes!("../../../vendor/tinycc/win32/include/ctype.h")),
+        ("dir.h", include_bytes!("../../../vendor/tinycc/win32/include/dir.h")),
+        ("direct.h", include_bytes!("../../../vendor/tinycc/win32/include/direct.h")),
+        ("dirent.h", include_bytes!("../../../vendor/tinycc/win32/include/dirent.h")),
+        ("dos.h", include_bytes!("../../../vendor/tinycc/win32/include/dos.h")),
+        ("errno.h", include_bytes!("../../../vendor/tinycc/win32/include/errno.h")),
+        ("excpt.h", include_bytes!("../../../vendor/tinycc/win32/include/excpt.h")),
+        ("fcntl.h", include_bytes!("../../../vendor/tinycc/win32/include/fcntl.h")),
+        ("fenv.h", include_bytes!("../../../vendor/tinycc/win32/include/fenv.h")),
+        ("inttypes.h", include_bytes!("../../../vendor/tinycc/win32/include/inttypes.h")),
+        ("io.h", include_bytes!("../../../vendor/tinycc/win32/include/io.h")),
+        ("iso646.h", include_bytes!("../../../vendor/tinycc/win32/include/iso646.h")),
+        ("limits.h", include_bytes!("../../../vendor/tinycc/win32/include/limits.h")),
+        ("locale.h", include_bytes!("../../../vendor/tinycc/win32/include/locale.h")),
+        ("malloc.h", include_bytes!("../../../vendor/tinycc/win32/include/malloc.h")),
+        ("math.h", include_bytes!("../../../vendor/tinycc/win32/include/math.h")),
+        ("mem.h", include_bytes!("../../../vendor/tinycc/win32/include/mem.h")),
+        ("memory.h", include_bytes!("../../../vendor/tinycc/win32/include/memory.h")),
+        ("process.h", include_bytes!("../../../vendor/tinycc/win32/include/process.h")),
+        ("sec_api/conio_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/conio_s.h")),
+        ("sec_api/crtdbg_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/crtdbg_s.h")),
+        ("sec_api/io_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/io_s.h")),
+        ("sec_api/mbstring_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/mbstring_s.h")),
+        ("sec_api/search_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/search_s.h")),
+        ("sec_api/stdio_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/stdio_s.h")),
+        ("sec_api/stdlib_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/stdlib_s.h")),
+        ("sec_api/stralign_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/stralign_s.h")),
+        ("sec_api/string_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/string_s.h")),
+        ("sec_api/sys/timeb_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/sys/timeb_s.h")),
+        ("sec_api/tchar_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/tchar_s.h")),
+        ("sec_api/time_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/time_s.h")),
+        ("sec_api/wchar_s.h", include_bytes!("../../../vendor/tinycc/win32/include/sec_api/wchar_s.h")),
+        ("setjmp.h", include_bytes!("../../../vendor/tinycc/win32/include/setjmp.h")),
+        ("share.h", include_bytes!("../../../vendor/tinycc/win32/include/share.h")),
+        ("signal.h", include_bytes!("../../../vendor/tinycc/win32/include/signal.h")),
+        ("stdint.h", include_bytes!("../../../vendor/tinycc/win32/include/stdint.h")),
+        ("stdio.h", include_bytes!("../../../vendor/tinycc/win32/include/stdio.h")),
+        ("stdlib.h", include_bytes!("../../../vendor/tinycc/win32/include/stdlib.h")),
+        ("string.h", include_bytes!("../../../vendor/tinycc/win32/include/string.h")),
+        ("sys/fcntl.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/fcntl.h")),
+        ("sys/file.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/file.h")),
+        ("sys/locking.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/locking.h")),
+        ("sys/stat.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/stat.h")),
+        ("sys/time.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/time.h")),
+        ("sys/timeb.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/timeb.h")),
+        ("sys/types.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/types.h")),
+        ("sys/unistd.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/unistd.h")),
+        ("sys/utime.h", include_bytes!("../../../vendor/tinycc/win32/include/sys/utime.h")),
+        ("tcc/tcc_libm.h", include_bytes!("../../../vendor/tinycc/win32/include/tcc/tcc_libm.h")),
+        ("tchar.h", include_bytes!("../../../vendor/tinycc/win32/include/tchar.h")),
+        ("time.h", include_bytes!("../../../vendor/tinycc/win32/include/time.h")),
+        ("uchar.h", include_bytes!("../../../vendor/tinycc/win32/include/uchar.h")),
+        ("unistd.h", include_bytes!("../../../vendor/tinycc/win32/include/unistd.h")),
+        ("vadefs.h", include_bytes!("../../../vendor/tinycc/win32/include/vadefs.h")),
+        ("values.h", include_bytes!("../../../vendor/tinycc/win32/include/values.h")),
+        ("wchar.h", include_bytes!("../../../vendor/tinycc/win32/include/wchar.h")),
+        ("wctype.h", include_bytes!("../../../vendor/tinycc/win32/include/wctype.h")),
+        ("winapi/basetsd.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/basetsd.h")),
+        ("winapi/basetyps.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/basetyps.h")),
+        ("winapi/guiddef.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/guiddef.h")),
+        ("winapi/poppack.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/poppack.h")),
+        ("winapi/pshpack1.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/pshpack1.h")),
+        ("winapi/pshpack2.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/pshpack2.h")),
+        ("winapi/pshpack4.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/pshpack4.h")),
+        ("winapi/pshpack8.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/pshpack8.h")),
+        ("winapi/qos.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/qos.h")),
+        ("winapi/shellapi.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/shellapi.h")),
+        ("winapi/winbase.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winbase.h")),
+        ("winapi/wincon.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/wincon.h")),
+        ("winapi/windef.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/windef.h")),
+        ("winapi/windows.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/windows.h")),
+        ("winapi/winerror.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winerror.h")),
+        ("winapi/wingdi.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/wingdi.h")),
+        ("winapi/winnls.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winnls.h")),
+        ("winapi/winnt.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winnt.h")),
+        ("winapi/winreg.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winreg.h")),
+        ("winapi/winsock2.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winsock2.h")),
+        ("winapi/winuser.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winuser.h")),
+        ("winapi/winver.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/winver.h")),
+        ("winapi/ws2ipdef.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/ws2ipdef.h")),
+        ("winapi/ws2tcpip.h", include_bytes!("../../../vendor/tinycc/win32/include/winapi/ws2tcpip.h")),
     ];
 }
 
@@ -2460,6 +2561,35 @@ impl CompilerRT {
         if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
             let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
         }
+
+        #[cfg(windows)]
+        {
+            let Ok(win32_dir) =
+                bun_cc.make_open_path(b"win32", bun_sys::OpenDirOptions::default())
+            else {
+                return true;
+            };
+            for (name, source) in CompilerRtSources::WIN32_HEADERS {
+                let staged = match name.rfind('/') {
+                    Some(slash) => {
+                        let (parent, file) = name.split_at(slash + 1);
+                        let Ok(parent_dir) = win32_dir
+                            .make_open_path(parent.as_bytes(), bun_sys::OpenDirOptions::default())
+                        else {
+                            return true;
+                        };
+                        Self::write_compiler_rt_file(&parent_dir, file.as_bytes(), source)
+                    }
+                    None => Self::write_compiler_rt_file(&win32_dir, name.as_bytes(), source),
+                };
+                if !staged {
+                    return true;
+                }
+            }
+            if let Ok(win32_path) = bun_sys::get_fd_path(win32_dir.fd(), &mut path_buf) {
+                let _ = COMPILER_RT_WIN32_DIR.set(ZBox::from_bytes(&*win32_path));
+            }
+        }
         true
     }
 
@@ -2521,6 +2651,17 @@ impl CompilerRT {
     pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
+    }
+
+    /// Staged tcc win32 headers (Windows only) — lets cc() resolve
+    /// `<stdio.h>` etc. even though no system C include dir exists there.
+    #[cfg(windows)]
+    pub(crate) fn win32_dir() -> Option<&'static ZStr> {
+        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
+        COMPILER_RT_WIN32_DIR
             .get()
             .map(|b| b.as_zstr())
             .filter(|d| !d.is_empty())
