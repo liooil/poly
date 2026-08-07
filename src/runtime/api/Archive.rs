@@ -6,7 +6,7 @@ use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox};
+use bun_core::{self, Output, ZBox, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
@@ -1393,12 +1393,12 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     }
 
     // Reject paths with ".." components
-    for component in pathname.split(|b| *b == b'/') {
+    for component in strings::split(pathname, b"/") {
         if component == b".." {
             return false;
         }
         // Also check Windows-style separators
-        for win_component in component.split(|b| *b == b'\\') {
+        for win_component in strings::split(component, b"\\") {
             if win_component == b".." {
                 return false;
             }
@@ -1483,18 +1483,27 @@ fn extract_to_disk_filtered(
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let pathname_z = entry_ref.pathname();
+        let raw_pathname_z = entry_ref.pathname();
         #[cfg(windows)]
-        let pathname_zbox = ZBox::from_vec_with_nul(
+        let raw_pathname_zbox = ZBox::from_vec_with_nul(
             entry_pathname_utf8(entry_ref)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
         );
         #[cfg(windows)]
-        let pathname_z = pathname_zbox.as_zstr();
+        let raw_pathname_z = raw_pathname_zbox.as_zstr();
+        let raw_pathname = raw_pathname_z.as_bytes();
+
+        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        if raw_pathname.len() >= normalized_buf.len() {
+            continue;
+        }
+        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(raw_pathname, &mut normalized_buf[..]);
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
-        if !is_safe_path(pathname) {
+        if pathname == b"." || !is_safe_path(pathname) {
             continue;
         }
 

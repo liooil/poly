@@ -242,6 +242,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -255,6 +258,16 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
+    ),
+    parse_param!("--no-warnings                     Silence all process warnings"),
+    parse_param!("--trace-warnings                  Show stack traces on process warnings"),
+    parse_param!("--trace-deprecation               Show stack traces on deprecations"),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings"),
+    parse_param!(
+        "--redirect-warnings <STR>         Write process warnings to the given file instead of printing to stderr"
+    ),
+    parse_param!(
+        "--disable-warning <STR>...        Silence specific process warnings by code or type"
     ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
@@ -598,6 +611,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
+    ),
+    parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
@@ -608,6 +624,12 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
+    ),
+    parse_param!(
+        "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
+    ),
+    parse_param!(
+        "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -683,6 +705,18 @@ static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
@@ -1047,6 +1081,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
         }
 
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
+        }
+
         if let Some(user_agent) = args.option(b"--user-agent") {
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
@@ -1278,6 +1316,28 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+        if args.flag(b"--no-warnings") {
+            Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-warnings") {
+            Bun__Node__ProcessTraceWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-deprecation") {
+            Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--pending-deprecation") {
+            Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(path) = args.option(b"--redirect-warnings") {
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
+        }
+        {
+            let disabled = args.options(b"--disable-warning");
+            if !disabled.is_empty() {
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
+            }
+        }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
             // can drop the previous value; box the argv-borrowed slice up
@@ -1425,8 +1485,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.debug.run_in_bun = true;
         }
     }
-
-    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -1779,13 +1837,30 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.shard = Some(Shard { index, count });
     }
+    for path in args.options(b"--timings") {
+        if path.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
+            Global::exit(1);
+        }
+        if !ctx.test_options.timings_files.iter().any(|p| &**p == *path) {
+            ctx.test_options.timings_files.push((*path).into());
+        }
+    }
+    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
+        );
+        Global::exit(1);
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -1810,8 +1885,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
-        // --parallel implies --isolate inside each worker.
-        ctx.test_options.isolate = true;
+        ctx.test_options.isolate = !no_isolate;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {
@@ -1931,9 +2005,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
@@ -2418,15 +2492,15 @@ fn parse_build_command_options(
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",

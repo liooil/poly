@@ -93,73 +93,39 @@ pub mod zig_stack_frame_code;
 #[path = "ZigStackFramePosition.rs"]
 pub mod zig_stack_frame_position;
 
-/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
-/// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
-pub mod schema_api {
-    use crate::ZigStackFramePosition;
+/// Owned snapshots of a [`ZigException`] (see `ZigException::add_to_error_list`),
+/// collected into an [`ExceptionList`](virtual_machine::ExceptionList) so callers
+/// such as the `Bun.serve` development error page can report errors after the
+/// JSC exception itself is gone.
+pub mod exception_list {
+    use crate::{JSErrorCode, JSRuntimeType, ZigStackFrameCode, ZigStackFramePosition};
 
-    /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub struct StackFrameScope(pub(crate) u8);
-
-    impl StackFrameScope {
-        pub(crate) const NONE: Self = Self(0);
-    }
-
-    /// Line/column position of a stack frame (FFI layout shared with C++).
-    pub type StackFramePosition = ZigStackFramePosition;
-
-    /// One captured stack frame: function name, file, position, and scope (FFI layout shared with C++).
-    #[derive(Clone)]
     pub struct StackFrame {
-        /// function_name
-        pub(crate) function_name: Box<[u8]>,
-        /// file
+        pub function_name: Box<[u8]>,
+        /// Source URL, remapped relative to the project root / origin.
         pub file: Box<[u8]>,
-        /// position
-        pub(crate) position: StackFramePosition,
-        /// scope
-        pub scope: StackFrameScope,
+        pub position: ZigStackFramePosition,
+        pub code_type: ZigStackFrameCode,
     }
 
-    impl Default for StackFrame {
-        fn default() -> Self {
-            Self {
-                function_name: Box::default(),
-                file: Box::default(),
-                position: StackFramePosition::INVALID,
-                scope: StackFrameScope::NONE,
-            }
-        }
-    }
-
-    /// A line of source text with its line number, used for error previews.
-    #[derive(Clone, Default)]
     pub struct SourceLine {
-        /// line
+        /// 0-based.
         pub line: i32,
+        pub text: Box<[u8]>,
     }
 
-    /// A captured stack trace: frames plus the source lines used to render previews.
-    #[derive(Clone, Default)]
+    #[derive(Default)]
     pub struct StackTrace {
-        /// source_lines
-        pub(crate) source_lines: Vec<SourceLine>,
-        /// frames
-        pub(crate) frames: Vec<StackFrame>,
+        pub source_lines: Vec<SourceLine>,
+        pub frames: Vec<StackFrame>,
     }
 
-    /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
-    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
-    /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
-    #[derive(Clone, Default)]
     pub struct JsException {
         pub name: Box<[u8]>,
         pub message: Box<[u8]>,
-        pub runtime_type: u16,
-        pub code: u16,
-        pub(crate) stack: StackTrace,
+        pub runtime_type: JSRuntimeType,
+        pub code: JSErrorCode,
+        pub stack: StackTrace,
     }
 }
 #[path = "array_buffer.rs"]
@@ -178,8 +144,6 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "Exception.rs"]
 pub mod exception;
-#[path = "ipc.rs"]
-pub mod ipc;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]
@@ -518,8 +482,6 @@ pub mod event_loop_handle;
 pub mod ffi;
 #[path = "JSCScheduler.rs"]
 pub mod jsc_scheduler;
-#[path = "JSONLineBuffer.rs"]
-pub mod json_line_buffer;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 #[path = "WorkTask.rs"]
@@ -527,6 +489,11 @@ pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
+    initialize_with(eval_mode, false);
+}
+
+/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
+pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
@@ -545,6 +512,7 @@ pub fn initialize(eval_mode: bool) {
             on_jsc_invalid_env_var,
             eval_mode,
             one_shot,
+            short_lived_globals,
         )
     };
 }
@@ -610,10 +578,10 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 
 bun_core::oom_from_alloc!(JsError);
 
-impl From<bun_event_loop::ErasedJsError> for JsError {
+impl From<bun_core::JsError> for JsError {
     #[inline]
-    fn from(e: bun_event_loop::ErasedJsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+    fn from(e: bun_core::JsError) -> Self {
+        use bun_core::JsError as E;
         match e {
             E::Thrown => JsError::Thrown,
             E::OutOfMemory => JsError::OutOfMemory,
@@ -622,17 +590,17 @@ impl From<bun_event_loop::ErasedJsError> for JsError {
     }
 }
 
-impl From<JsTerminated> for bun_event_loop::ErasedJsError {
+impl From<JsTerminated> for bun_core::JsError {
     #[inline]
     fn from(_: JsTerminated) -> Self {
-        bun_event_loop::ErasedJsError::Terminated
+        bun_core::JsError::Terminated
     }
 }
 
-impl From<JsError> for bun_event_loop::ErasedJsError {
+impl From<JsError> for bun_core::JsError {
     #[inline]
     fn from(e: JsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+        use bun_core::JsError as E;
         match e {
             JsError::Thrown => E::Thrown,
             JsError::OutOfMemory => E::OutOfMemory,
@@ -1389,7 +1357,7 @@ pub use self::event_loop as EventLoop;
 pub mod any_task_job;
 pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 pub use self::event_loop::{
-    AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
+    AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
     ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
     GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
     PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
@@ -1440,10 +1408,7 @@ pub mod webcore {
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
 #[allow(non_snake_case)]
 pub mod Node {
-    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes; the
-    /// `node::ErrorCode` alias resolves directly to [`crate::ErrorCode`]
-    /// (LAYERING: avoids a
-    /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
+    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes.
     pub use crate::ErrorCode;
     pub use crate::node_path::*;
 }
@@ -1927,6 +1892,7 @@ unsafe extern "C" {
         cb: extern "C" fn(name: *const u8, len: usize),
         eval_mode: bool,
         one_shot_startup: bool,
+        short_lived_globals: bool,
     );
 }
 

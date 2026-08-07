@@ -32,7 +32,7 @@ use bun_jsc::module_loader::{
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
+    InitOptions, ResolveMode, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
     AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
@@ -392,9 +392,7 @@ unsafe fn init_runtime_state(
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
@@ -1344,7 +1342,7 @@ fn load_standalone_sourcemap(
 /// # Safety
 /// `global` is the live VM global; called on the JS thread inside an
 /// `event_loop.enter()` scope.
-unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
+pub(crate) unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
     // SAFETY: per fn contract.
     let global = unsafe { &*global };
     // Spec discards a JS exception here (`catch |err| switch (err) {
@@ -1362,7 +1360,7 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
 /// `IPCInstance.handleIPCClose`.
 ///
 /// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
-fn ipc_child_singleton_deinit() {
+pub(crate) fn ipc_child_singleton_deinit() {
     // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
     // `Drop`; taking the `Option` runs them.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
@@ -1473,8 +1471,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     has_blob_url,
     body_mixin_get_blob,
     process_exit,
-    handle_ipc_internal_child,
-    ipc_child_singleton_deinit,
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
@@ -1633,6 +1629,8 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+    #[cfg(target_os = "macos")]
+    crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
@@ -1681,23 +1679,30 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     }
 }
 
-/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
+/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
 /// When `TestReporter.enable` arrives after test
 /// collection has started, walk the already-discovered scope tree, assign
 /// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
+/// Returns `next_test_id` advanced past every ID assigned (the caller writes
+/// it back into `TestReporterAgent::next_test_id`).
 ///
 /// # Safety
 /// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
 /// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
 /// thread.
-unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::TestReporterHandle) {
+unsafe fn retroactively_report_discovered_tests(
+    agent: *mut bun_jsc::debugger::TestReporterHandle,
+    next_test_id: i32,
+) -> i32 {
     use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::{TestReporterHandle, TestType};
 
-    let Some(runner) = Jest::runner() else { return };
+    let Some(runner) = Jest::runner() else {
+        return next_test_id;
+    };
     let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
-        return;
+        return next_test_id;
     };
     // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
     let active_file = unsafe { &mut *active_file.as_ptr() };
@@ -1706,7 +1711,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     // discovered).
     match active_file.phase {
         Phase::Collection | Phase::Execution => {}
-        Phase::Done => return,
+        Phase::Done => return next_test_id,
     }
 
     // Get the file path for source location info.
@@ -1716,8 +1721,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         .text();
     let mut source_url = bun_core::String::init(file_path);
 
-    // Track the maximum ID we assign.
-    let mut max_id: i32 = 0;
+    let mut max_id: i32 = next_test_id;
 
     // Recursively report all discovered tests starting from root scope.
     retroactively_report_scope(
@@ -1728,9 +1732,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         &mut source_url,
     );
 
-    // A debug-only log of `max_id` was dropped here: `scoped_log!` only accepts
-    // an ident, so it can't name the scoped-logger static in `bun_jsc::debugger`.
-    let _ = max_id;
+    return max_id;
 
     fn retroactively_report_scope(
         agent: *mut TestReporterHandle,
@@ -2118,7 +2120,7 @@ fn transpile_source_code_inner(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc | L::Py
+                L::Toml | L::Yaml | L::Json5 | L::Xml | L::Text | L::Json | L::Jsonc | L::Py
             ))
     {
         return Ok(OwnedResolvedSource::from(ResolvedSource {
@@ -2200,6 +2202,7 @@ fn transpile_source_code_inner(
         | L::Toml
         | L::Yaml
         | L::Json5
+        | L::Xml
         | L::Text
         | L::Md => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
@@ -2317,8 +2320,7 @@ fn transpile_source_code_inner(
             // consume this scope via `take_state()` and ship the box with the
             // arena.
             let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
-            // ── Watcher fd / package_json lookup ────────────────────────────
-            let mut fd: Option<bun_sys::Fd> = None;
+            // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
                 // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
@@ -2326,31 +2328,12 @@ fn transpile_source_code_inner(
                 let import_watcher: *mut bun_jsc::ImportWatcher =
                     unsafe { &*jsc_vm }.bun_watcher.cast();
                 if !import_watcher.is_null() {
-                    // SAFETY: non-null per check above. The watchlist *is*
-                    // mutated cross-thread (the watcher thread's
-                    // `flush_evictions` closes fds and `swap_remove`s), so
-                    // snapshot under the watcher mutex — see
-                    // `ImportWatcher::snapshot_fd_and_package_json` doc for
-                    // the EBADF race this closes.
+                    // SAFETY: non-null per check above. Never read through the
+                    // watchlist's stored fd; see
+                    // `ImportWatcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
-                    (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
+                    package_json = iw.snapshot_package_json(hash);
                 }
-            }
-
-            // Note / fix: never reuse the watcher's cached fd for the
-            // `--hot` entrypoint. An atomic `rename()` over the entrypoint (the
-            // common HMR save pattern) replaces its inode; the watcher entry
-            // still holds an fd to the now-unlinked old inode until the
-            // IN_DELETE_SELF event for it is processed and `flush_evictions`
-            // closes it. If a reload's transpile runs first (e.g. the
-            // directory-watch recovery in `hot_reloader` re-fired the reload
-            // before that file event landed under load), reading via the stale
-            // fd returns the OLD file contents — the reload "succeeds" with the
-            // wrong source and `bun --hot` hangs. Re-open the entrypoint by
-            // path so we always see the current inode; `maybe_watch_file` below
-            // re-registers the fresh fd with the watcher.
-            if is_main && fd.is_some() {
-                fd = None;
             }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
@@ -2431,7 +2414,7 @@ fn transpile_source_code_inner(
                 }
             };
 
-            let mut should_close_input_file_fd = fd.is_none();
+            let mut should_close_input_file_fd = true;
 
             // Only JS-like loaders get the cjs/esm wrapper hint.
             let module_type_only_for_wrappables = match loader {
@@ -2590,7 +2573,7 @@ fn transpile_source_code_inner(
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
-                    file_descriptor: fd,
+                    file_descriptor: None,
                     // SAFETY: `input_file_fd_ptr` points at this frame's
                     // `input_file_fd`; reborrow through the raw pointer so the
                     // `_fd_guard` scopeguard's tag is not invalidated by a
@@ -2606,6 +2589,10 @@ fn transpile_source_code_inner(
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     experimental_decorators: unsafe {
                         (*jsc_vm).transpiler.options.experimental_decorators
+                    },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    use_define_for_class_fields: unsafe {
+                        (*jsc_vm).transpiler.options.use_define_for_class_fields
                     },
                     virtual_source,
                     dont_bundle_twice: true,
@@ -2764,8 +2751,11 @@ fn transpile_source_code_inner(
                     }));
                 }
 
-                // JSON/TOML/YAML/JSON5: export as a JS object.
-                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
+                // JSON/TOML/YAML/JSON5/XML: export as a JS object.
+                if matches!(
+                    loader,
+                    L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5 | L::Xml
+                ) {
                     // SAFETY: `jsc_vm.global` is set during init and live for
                     // VM lifetime; `global_object` (if non-null) is the live
                     // per-thread global.
@@ -2793,12 +2783,23 @@ fn transpile_source_code_inner(
                             // `SExpr` part; anything else is a parser bug.
                             unreachable!("JSON/TOML/YAML parse result is always SExpr")
                         };
-                        bun_js_parser_jsc::expr_to_js(&s_expr.value, global).unwrap_or_else(|e| {
-                            bun_core::Output::panic(format_args!(
-                                "Unexpected JS error: {}",
-                                <&'static str>::from(e)
-                            ))
-                        })
+                        match bun_js_parser_jsc::expr_to_js(&s_expr.value, global) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(match e {
+                                    bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
+                                    bun_ast::ToJSError::JSTerminated => {
+                                        bun_jsc::JsError::Terminated
+                                    }
+                                    bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
+                                    e => global.throw_error(
+                                        bun_jsc::CrateError::from(e),
+                                        "converting module to JavaScript",
+                                    ),
+                                }
+                                .into());
+                            }
+                        }
                     };
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
@@ -3004,24 +3005,16 @@ fn transpile_source_code_inner(
                     // AST's small `AstVec`s live in its inline bump chunk.
                     let ast_alloc_state = ast_alloc_scope.take_state();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
-                    // per-thread VM / global; `package_json` is the opaque watcher
-                    // forward-decl of `bun_resolver::package_json::PackageJSON`.
+                    // per-thread VM / global.
                     unsafe {
                         (*jsc_vm).modules.enqueue(
                             &*global_object,
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                loader,
-                                fd,
-                                package_json: package_json.map(|p| {
-                                    &*core::ptr::from_ref(p)
-                                        .cast::<bun_resolver::package_json::PackageJSON>()
-                                }),
                                 promise_ptr: Some(promise_ptr),
                                 specifier,
                                 referrer,
-                                hash,
                                 arena,
                                 ast_alloc_state,
                             },
@@ -3524,20 +3517,19 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
+                if !matches!(
+                    watcher.add_file::<true>(
                         input_fd,
                         path.text,
                         hash,
                         loader,
                         bun_sys::Fd::INVALID,
                         None,
-                    )
-                    .is_err()
-                {
-                    // Close the fd we just opened on macOS;
-                    // not a transpile failure (the user didn't open it).
-                    #[cfg(target_os = "macos")]
+                    ),
+                    Ok(bun_watcher::FdOwnership::Watcher)
+                ) {
+                    // Not adopted (already watched, or add failed); close the
+                    // fd this arm opened.
                     if input_fd.is_valid() {
                         use bun_sys::FdExt as _;
                         input_fd.close();
@@ -3636,18 +3628,22 @@ fn maybe_watch_file(
     {
         return;
     }
-    *should_close_input_file_fd = false;
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-    let _ = watcher.add_file::<true>(
-        input_file_fd,
-        path.text,
-        hash,
-        loader,
-        bun_sys::Fd::INVALID,
-        package_json,
-    );
+    if matches!(
+        watcher.add_file::<true>(
+            input_file_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            package_json,
+        ),
+        Ok(bun_watcher::FdOwnership::Watcher)
+    ) {
+        *should_close_input_file_fd = false;
+    }
 }
 
 // Generated `bun:sqlite` import shims.
@@ -4321,6 +4317,8 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         19 => Some(L::Yaml),
         20 => Some(L::Json5),
         21 => Some(L::Md),
+        22 => Some(L::Py),
+        23 => Some(L::Xml),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -5543,9 +5541,8 @@ unsafe fn resolve_hook(
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: *mut bun_core::String,
-    is_esm: bool,
+    mode: ResolveMode,
     is_a_file_path: bool,
-    is_user_require_resolve: bool,
 ) -> bool {
     use bun_ast::Target;
     use bun_jsc::ResolveMessage;
@@ -5567,13 +5564,7 @@ unsafe fn resolve_hook(
     if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
-        let import_kind = if is_esm {
-            ImportKind::Stmt
-        } else if is_user_require_resolve {
-            ImportKind::RequireResolve
-        } else {
-            ImportKind::Require
-        };
+        let import_kind = mode.import_kind();
         let printed = ResolveMessage::fmt(
             specifier_utf8.slice(),
             source_utf8.slice(),
@@ -5628,10 +5619,10 @@ unsafe fn resolve_hook(
     }
 
     // Hardcoded builtin alias fast path. For
-    // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
-    // returns the bare specifier as-is, not the canonical `node:fs`.
+    // `require.resolve("fs")` (`RequireResolve && node_builtin`) Node returns
+    // the bare specifier as-is, not the canonical `node:fs`.
     if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        let path = if is_user_require_resolve && hardcoded.node_builtin {
+        let path = if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
             specifier.dupe_ref()
         } else {
             bun_core::String::init(hardcoded.path.as_bytes())
@@ -5694,7 +5685,7 @@ unsafe fn resolve_hook(
             vm,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            is_esm,
+            mode.is_esm(),
             is_a_file_path,
             &mut result_path,
             &mut result_query,
@@ -5709,13 +5700,7 @@ unsafe fn resolve_hook(
                 }
             }
 
-            let import_kind = if is_esm {
-                ImportKind::Stmt
-            } else if is_user_require_resolve {
-                ImportKind::RequireResolve
-            } else {
-                ImportKind::Require
-            };
+            let import_kind = mode.import_kind();
 
             let printed = ResolveMessage::fmt(
                 specifier_utf8.slice(),

@@ -279,6 +279,10 @@ pub mod test {
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
 
+    /// `bun test --timings` / `--update-timings`: per-file duration table.
+    #[path = "Timings.rs"]
+    pub mod timings;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -399,6 +403,19 @@ fn start_time() -> i128 {
 // leaking. The mutex provides exclusion between `get_title`/`set_title`.
 pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
+
+#[allow(non_upper_case_globals)]
+/// `--redirect-warnings=<path>` — process warnings are appended to this file
+/// instead of stderr (Node's flag; NODE_REDIRECT_WARNINGS is handled by the
+/// C++ consumer as the fallback). Set once during CLI parse.
+pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
+    std::sync::OnceLock::new();
+
+#[allow(non_upper_case_globals)]
+/// `--disable-warning=<code-or-type>` (repeatable) — warnings whose `code`
+/// or `name` matches an entry are suppressed. Set once during CLI parse.
+pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
+    std::sync::OnceLock::new();
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
@@ -890,11 +907,11 @@ pub mod command {
         }
         // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
         // (no subcommand keyword contains a `.`).
-        let basename = match arg.iter().rposition(|&b| b == b'/' || b == b'\\') {
+        let basename = match strings::last_index_of_any(arg, b"/\\") {
             Some(i) => &arg[i + 1..],
             None => arg,
         };
-        basename.contains(&b'.')
+        strings::contains_char(basename, b'.')
     }
 
     /// `#[inline(never)]`: argv→`Tag` classification, called once from

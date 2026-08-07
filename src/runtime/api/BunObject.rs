@@ -81,7 +81,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
@@ -92,7 +92,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
 use crate::api::csrf_jsc;
-use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
+use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -170,16 +170,19 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
+        let mut output = if a1.is_undefined_or_null() {
+            None
+        } else {
+            StringOrBuffer::from_js(g, a1)?
+        };
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
             return Err(g.throw_invalid_arguments(format_args!(
                 "expected string, buffer, TypedArray, or Blob",
             )));
         };
-        let output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
+        }
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
@@ -339,6 +342,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
         BunObject_lazyPropCb_JSON5 => super::get_json5_object,
+        BunObject_lazyPropCb_XML => super::get_xml_object,
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
@@ -740,18 +744,6 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     Ok(ret)
 }
 
-// HOST_EXPORT(Bun__inspect, c)
-pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
-    // very stable memory address
-    let mut array: Vec<u8> = Vec::new();
-
-    let mut formatter = ConsoleObject::Formatter::new(global_this);
-    if write!(&mut array, "{}", value.to_fmt(&mut formatter)).is_err() {
-        return BunString::empty();
-    }
-    BunString::clone_utf8(&array)
-}
-
 // HOST_EXPORT(Bun__inspect_singleline, c)
 pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
@@ -982,7 +974,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
     let mut path = ZigStringSlice::EMPTY;
-    let mut editor_choice: Option<Editor> = None;
+    let mut editor_name: Option<ZigStringSlice> = None;
     let mut line: Option<ZigStringSlice> = None;
     let mut column: Option<ZigStringSlice> = None;
 
@@ -990,59 +982,65 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         path = file_path_.to_slice(global_this)?;
     }
 
+    // Option getters and `toString` run arbitrary user JS that may re-enter
+    // this function, so every JS-visible coercion must finish before the
+    // EDITOR_CONTEXT borrow below is taken (re-entry while borrowed panics).
+    if let Some(opts) = arguments.next_eat() {
+        if !opts.is_undefined_or_null() {
+            if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
+                editor_name = Some(editor_val.to_slice(global_this)?);
+            }
+
+            if let Some(line_) = opts.get_truthy(global_this, "line")? {
+                line = Some(line_.to_slice(global_this)?);
+            }
+
+            if let Some(column_) = opts.get_truthy(global_this, "column")? {
+                column = Some(column_.to_slice(global_this)?);
+            }
+        }
+    }
+
     EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
         let mut slot = cell.borrow_mut();
         let slot = &mut *slot;
         let edit = &mut slot.ctx;
         let env = vm.transpiler.env_mut();
+        let mut editor_choice: Option<Editor> = None;
 
-        if let Some(opts) = arguments.next_eat() {
-            if !opts.is_undefined_or_null() {
-                if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                    let sliced = editor_val.to_slice(global_this)?;
-                    let prev_name = edit.name;
+        if let Some(sliced) = &editor_name {
+            let prev_name = edit.name;
 
-                    if !strings::eql_long(prev_name, sliced.slice(), true) {
-                        let prev = core::mem::take(edit);
-                        // Own the bytes in `name_storage` and
-                        // hand back a thread-lifetime borrow.
-                        let prev_storage =
-                            core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
-                        // SAFETY: `name_storage` lives in a thread_local that
-                        // outlives any caller; we never reallocate it while
-                        // `edit.name` is observed (single-threaded JS VM).
-                        edit.name =
-                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
-                        edit.detect_editor(env);
-                        editor_choice = edit.editor;
-                        if editor_choice.is_none() {
-                            slot.name_storage = prev_storage;
-                            *edit = prev;
-                            return Err(global_this.throw(format_args!(
-                                "Could not find editor \"{}\"",
-                                bstr::BStr::new(sliced.slice()),
-                            )));
-                        } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                            // `detect_editor` aliased `path` to `name` (absolute
-                            // editor path). `name` is backed by `slot.name_storage`,
-                            // which a later call may drop while the detached editor
-                            // thread is still reading argv[0]. Give `path`
-                            // process-lifetime storage, matching every other
-                            // `detect_editor` branch.
-                            edit.path = bun_resolver::fs::FileSystem::instance()
-                                .dirname_store
-                                .append_slice(edit.path)
-                                .expect("unreachable");
-                        }
-                    }
-                }
-
-                if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                    line = Some(line_.to_slice(global_this)?);
-                }
-
-                if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                    column = Some(column_.to_slice(global_this)?);
+            if !strings::eql_long(prev_name, sliced.slice(), true) {
+                let prev = core::mem::take(edit);
+                // Own the bytes in `name_storage` and
+                // hand back a thread-lifetime borrow.
+                let prev_storage =
+                    core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
+                // SAFETY: `name_storage` lives in a thread_local that
+                // outlives any caller; we never reallocate it while
+                // `edit.name` is observed (single-threaded JS VM).
+                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.detect_editor(env);
+                editor_choice = edit.editor;
+                if editor_choice.is_none() {
+                    slot.name_storage = prev_storage;
+                    *edit = prev;
+                    return Err(global_this.throw(format_args!(
+                        "Could not find editor \"{}\"",
+                        bstr::BStr::new(sliced.slice()),
+                    )));
+                } else if edit.name.as_ptr() == edit.path.as_ptr() {
+                    // `detect_editor` aliased `path` to `name` (absolute
+                    // editor path). `name` is backed by `slot.name_storage`,
+                    // which a later call may drop while the detached editor
+                    // thread is still reading argv[0]. Give `path`
+                    // process-lifetime storage, matching every other
+                    // `detect_editor` branch.
+                    edit.path = bun_resolver::fs::FileSystem::instance()
+                        .dirname_store
+                        .append_slice(edit.path)
+                        .expect("unreachable");
                 }
             }
         }
@@ -1142,10 +1140,14 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
     }
 
-    let mut is_esm = true;
+    let mut mode = ResolveMode::Esm;
     if let Some(next) = args.next_eat() {
         if next.is_boolean() {
-            is_esm = next.to_boolean();
+            mode = if next.to_boolean() {
+                ResolveMode::Esm
+            } else {
+                ResolveMode::Require
+            };
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
         }
@@ -1155,7 +1157,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
     let from_str = scopeguard::guard(from_str, |s| s.deref());
-    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
+    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, mode)
 }
 
 /// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
@@ -1185,8 +1187,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
     from: BunString,
-    is_esm: bool,
-    is_user_require_resolve: bool,
+    mode: ResolveMode,
 ) -> JsResult<JSValue> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut owned = ResolveDerefOnDrop {
@@ -1211,8 +1212,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         specifier_for_resolve,
         from,
         Some(&mut owned.query_string),
-        is_esm,
-        is_user_require_resolve,
+        mode,
     )?;
 
     if !errorable.success {
@@ -1276,16 +1276,20 @@ pub fn bun_resolve(
     };
     let source_str = scopeguard::guard(source_str, |s| s.deref());
 
-    let value =
-        match do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, false) {
-            Ok(v) => v,
-            Err(_) => {
-                let err = global.try_take_exception().unwrap();
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global, err,
-                );
-            }
-        };
+    let value = match do_resolve_with_args::<true>(
+        global,
+        *specifier_str,
+        *source_str,
+        ResolveMode::from_ffi_bools(is_esm, false),
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = global.try_take_exception().unwrap();
+            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global, err,
+            );
+        }
+    };
 
     JSPromise::resolved_promise_value(global, value)
 }
@@ -1323,8 +1327,7 @@ pub fn bun_resolve_sync(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1391,8 +1394,7 @@ pub fn bun_resolve_sync_with_paths(
             global,
             *specifier_str,
             *source_str,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1413,7 +1415,12 @@ pub fn bun_resolve_sync_with_strings(
         specifier
     );
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false)
+        do_resolve_with_args::<true>(
+            global,
+            *specifier,
+            *source,
+            ResolveMode::from_ffi_bools(is_esm, false),
+        )
     })
 }
 
@@ -1443,8 +1450,7 @@ pub fn bun_resolve_sync_with_source(
             global,
             *specifier_str,
             *source,
-            is_esm,
-            is_user_require_resolve,
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
 }
@@ -1456,15 +1462,15 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
     let mut offset: usize = 0;
     if arguments.len() > 1 {
         let offset_value = arguments[1].coerce_to_int64(global_this)?;
         offset = offset_value.max(0) as usize;
     }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
 
     let bytes = buffer.byte_slice();
     let mut current_offset = offset;
@@ -1733,13 +1739,19 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                    let buf_len = buf.len();
+                    let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
+                        &mut buf[..buf_len - 1],
                         paths,
-                    );
+                    ) else {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!("Path too long"))
+                        );
+                    };
+                    break 'brk joined;
                 }
             }
             return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));
@@ -1867,6 +1879,10 @@ fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSON5Object::create(global_this)
+}
+
+fn get_xml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    XMLObject::create(global_this)
 }
 
 fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2342,7 +2358,7 @@ pub mod JSZlib {
     // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
     // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
     // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    pub use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
+    use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]
@@ -2490,7 +2506,7 @@ pub mod JSZlib {
                 //  +---+---+---+---+---+---+---+---+
                 //  |     CRC32     |     ISIZE     |
                 //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_ne_bytes(
+                let estimated_size: u32 = u32::from_le_bytes(
                     compressed[compressed.len() - 4..][..4]
                         .try_into()
                         .expect("infallible: size matches"),

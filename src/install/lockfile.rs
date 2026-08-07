@@ -2476,9 +2476,9 @@ macro_rules! string_builder {
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
 /// Canonical def lives in
-/// `bun_semver::semver_string`; re-exported under the local name so generic
+/// `bun_semver::semver_string`; imported under the local name so generic
 /// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
-pub use bun_semver::semver_string::BuilderStringType as StringBuilderType;
+use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
     #[inline]
@@ -2670,6 +2670,7 @@ impl FormatVersion {
 struct EqlSorter<'a> {
     pub string_buf: &'a [u8],
     pub pkg_names: &'a [SemverString],
+    pub pkg_resolutions: &'a [Resolution],
 }
 
 /// Basically placement id
@@ -2685,12 +2686,19 @@ impl<'a> EqlSorter<'a> {
     fn order(&self, l: PathToId, r: PathToId) -> Ordering {
         let l_path = l.tree_path.slice();
         let r_path = r.tree_path.slice();
-        // they exist in the same tree, name can't be the same so string compare.
-        strings::order(l_path, r_path).then_with(|| {
-            let l_name = self.pkg_names[l.pkg_id as usize];
-            let r_name = self.pkg_names[r.pkg_id as usize];
-            l_name.order(r_name, self.string_buf, self.string_buf)
-        })
+        strings::order(l_path, r_path)
+            .then_with(|| {
+                let l_name = self.pkg_names[l.pkg_id as usize];
+                let r_name = self.pkg_names[r.pkg_id as usize];
+                l_name.order(r_name, self.string_buf, self.string_buf)
+            })
+            // npm: aliases allow same-named packages in one tree node, so the
+            // resolution is needed for a total order.
+            .then_with(|| {
+                let l_res = &self.pkg_resolutions[l.pkg_id as usize];
+                let r_res = &self.pkg_resolutions[r.pkg_id as usize];
+                l_res.order(r_res, self.string_buf, self.string_buf)
+            })
     }
 }
 
@@ -2782,23 +2790,6 @@ impl Lockfile {
         let r_pkgs = r.packages.slice();
         let l_pkg_names = l_pkgs.items_name();
         let r_pkg_names = r_pkgs.items_name();
-
-        {
-            let sorter = EqlSorter {
-                pkg_names: l_pkg_names,
-                string_buf: l_string_buf,
-            };
-            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
-        }
-
-        {
-            let sorter = EqlSorter {
-                pkg_names: r_pkg_names,
-                string_buf: r_string_buf,
-            };
-            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
-        }
-
         let l_pkg_name_hashes = l_pkgs.items_name_hash();
         let l_pkg_resolutions = l_pkgs.items_resolution();
         let l_pkg_bins = l_pkgs.items_bin();
@@ -2807,6 +2798,24 @@ impl Lockfile {
         let r_pkg_resolutions = r_pkgs.items_resolution();
         let r_pkg_bins = r_pkgs.items_bin();
         let r_pkg_scripts = r_pkgs.items_scripts();
+
+        {
+            let sorter = EqlSorter {
+                pkg_names: l_pkg_names,
+                string_buf: l_string_buf,
+                pkg_resolutions: l_pkg_resolutions,
+            };
+            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+        }
+
+        {
+            let sorter = EqlSorter {
+                pkg_names: r_pkg_names,
+                string_buf: r_string_buf,
+                pkg_resolutions: r_pkg_resolutions,
+            };
+            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+        }
 
         let l_extern_strings = l.buffers.extern_strings.as_slice();
         let r_extern_strings = r.buffers.extern_strings.as_slice();
@@ -3062,12 +3071,8 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// --default` need not re-sort.
 pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
     std::sync::LazyLock::new(|| {
-        const DATA: &str = include_str!("default-trusted-dependencies.txt");
-        let mut names: Vec<&'static [u8]> = DATA
-            .split([' ', '\r', '\n', '\t'])
-            .filter(|s| !s.is_empty())
-            .map(str::as_bytes)
-            .collect();
+        const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
+        let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
         names.sort_unstable();
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,

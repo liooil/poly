@@ -412,17 +412,12 @@ impl<'a> LazyPackageDestinationDir<'a> {
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty()
-        || alias.len() >= MAX_PATH_BYTES
-        || alias.contains(&b'\\')
-        || alias.contains(&b':')
-        || alias.contains(&0)
-    {
+    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
         return false;
     }
 
     let mut component_count = 0usize;
-    for component in alias.split(|&c| c == b'/') {
+    for component in strings::split(alias, b"/") {
         component_count += 1;
         if component.is_empty() || component == b"." || component == b".." {
             return false;
@@ -2253,7 +2248,13 @@ impl<'a> PackageInstaller<'a> {
                     .get(&truncated_dep_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!()) {
+                    if *added.name == *alias.slice(string_buf!())
+                        && self.lockfile().has_trusted_dependency(
+                            alias.slice(string_buf!()),
+                            pkg_name.slice(string_buf!()),
+                            resolution,
+                        )
+                    {
                         break 'brk (true, false, added.add_to_lockfile);
                     }
                 }

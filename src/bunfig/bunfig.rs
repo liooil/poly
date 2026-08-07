@@ -27,8 +27,6 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
 pub(crate) struct Bunfig;
 
@@ -1547,6 +1545,9 @@ impl<'a> Parser<'a> {
                 api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
+        }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
         }
 
         Ok(())

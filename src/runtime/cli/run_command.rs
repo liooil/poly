@@ -787,12 +787,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // resolver's forward-decl `BundleOptions` lacks
-        // `prefer_latest_install`; only the bundler-side mirror carries it.
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
-        b.options.prefer_offline_install = offline == OfflineMode::Offline;
-        b.options.prefer_latest_install = offline == OfflineMode::Latest;
+        b.options.install_preference = offline;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -882,7 +879,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
-        args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
@@ -1501,8 +1497,12 @@ impl Run {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
+                    // A CJS entry runs synchronously in Node, so its top-level
+                    // throw is an uncaughtException; only an ESM entry
+                    // rejection reports origin "unhandledRejection".
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -2979,6 +2979,11 @@ impl RunCommand {
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
+        // Node.js does not auto-load `.env` files; match that here so tools with
+        // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
+        // values. Explicit `--env-file` is still honored. #6338
+        ctx.args.disable_default_env_files = true;
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
@@ -3095,10 +3100,7 @@ const EVAL_TRIGGER: &[u8] = b"/[eval]";
 /// embedding in a double-quoted JS string literal. Used by the cron-execution
 /// wrapper script to inline the entry path and cron period.
 fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
-    if !input
-        .iter()
-        .any(|&c| matches!(c, b'\\' | b'"' | b'\n' | b'\r' | b'\t'))
-    {
+    if !strings::contains_any(input, b"\\\"\n\r\t") {
         return input.to_vec();
     }
     let mut result: Vec<u8> = Vec::with_capacity(input.len() + 16);
@@ -3149,7 +3151,7 @@ impl RemoteImageDownload {
     fn on_done(
         this: *mut RemoteImageDownload,
         async_http: *mut bun_http::AsyncHTTP<'static>,
-        _result: bun_http::HTTPClientResult<'_>,
+        mut result: bun_http::HTTPClientResult<'_>,
     ) {
         // The worker's
         // ThreadlocalAsyncHTTP is about to be freed, so copy its
@@ -3167,8 +3169,8 @@ impl RemoteImageDownload {
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
-                (*real.as_ptr()).response_buffer = async_http.response_buffer;
             }
+            result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
             let _ = (*this.done).write_item(0);
@@ -3297,17 +3299,12 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
-            // SAFETY: `slot` is the freshly-allocated `MaybeUninit` heap slot
-            // and `response_buffer` was `ptr::write`n above; address is valid.
-            let response_buffer_ptr: *mut bun_core::MutableString =
-                unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
                 bun_url::URL::parse(url_static),
                 Default::default(),
                 b"",
-                response_buffer_ptr,
                 b"",
                 bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
                     d_ptr,
@@ -3405,14 +3402,17 @@ impl RunCommand {
                 continue;
             }
 
-            let fd = match sys::open_a(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600)
-            {
+            let fd = match sys::open_a(
+                &path,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+                0o600,
+            ) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
             let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
-                // openA + TRUNC leaves an orphan even on zero-byte
+                // openA + CREAT leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
                 // can't fail for OOM reasons.
                 Self::unlink_staged_path(&path);
@@ -3944,9 +3944,7 @@ impl BunXFastPath {
 
         // Trigger quoting only on
         // space/tab/quote — compare the FULL u16, not the truncated low byte.
-        let needs_quote = warg
-            .iter()
-            .any(|&c| c == b' ' as u16 || c == b'\t' as u16 || c == b'"' as u16);
+        let needs_quote = strings::index_of_any16(warg, bun_core::w!(" \t\"")).is_some();
 
         if !needs_quote {
             buffer[..warg.len()].copy_from_slice(warg);
@@ -3954,7 +3952,7 @@ impl BunXFastPath {
         }
 
         // Fast path: no embedded `"`/`\` → simple wrap.
-        let has_quote_or_backslash = warg.iter().any(|&c| c == b'"' as u16 || c == b'\\' as u16);
+        let has_quote_or_backslash = strings::index_of_any16(warg, bun_core::w!("\"\\")).is_some();
         if !has_quote_or_backslash {
             buffer[0] = b'"' as u16;
             buffer[1..1 + warg.len()].copy_from_slice(warg);

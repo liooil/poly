@@ -52,8 +52,9 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
@@ -204,7 +205,7 @@ pub mod fs {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let hex_value: u64 = (u128::from(hash) | nanos) as u64;
+            let hex_value: u64 = hash ^ (nanos as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
@@ -630,7 +631,7 @@ pub mod fs {
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
-                if !self.pretty.iter().any(|&b| b == b'\\') {
+                if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
                 let mut new = self.clone();
@@ -686,8 +687,8 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
-        EntryLookup, FilenameStoreAppender, dir_entry,
+        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
+        FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -1765,11 +1766,6 @@ pub mod fs {
 
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
-        pub mod entry {
-            pub mod lookup {
-                pub use crate::fs::DifferentCase;
-            }
-        }
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }
@@ -2074,17 +2070,6 @@ pub mod cache {
 
         pub use_alternate_source_cache: bool,
         pub(crate) stream: bool,
-    }
-
-    impl Default for Fs {
-        fn default() -> Self {
-            Self {
-                shared_buffer: MutableString::init(0).expect("unreachable"),
-                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                use_alternate_source_cache: false,
-                stream: false,
-            }
-        }
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned

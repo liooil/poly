@@ -6,11 +6,7 @@ use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
-use bun_options_types::LoaderExt as _;
-use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
-use bun_resolver::package_json::PackageJSON;
-use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -26,10 +22,6 @@ pub struct InitOpts<'a> {
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
-    pub fd: Option<Fd>,
-    pub package_json: Option<&'a PackageJSON>,
-    pub loader: bun_ast::Loader,
-    pub hash: u32,
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
@@ -46,14 +38,9 @@ pub struct AsyncModule {
     pub(crate) string_buf: Box<[u8]>,
     referrer_len: u32,
     specifier_len: u32,
-    // `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
-    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
-    // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
-    // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
-    // [`crate::GlobalRef`] which encapsulates the single audited deref.
-    pub(crate) package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub(crate) loader: api::Loader,
-    pub(crate) hash: u32, // default = u32::MAX
+    // `*JSGlobalObject` is a VM-lifetime backref (BACKREF/JSC_BORROW class in
+    // LIFETIMES.tsv); [`crate::GlobalRef`] encapsulates the single audited
+    // deref.
     pub global_this: crate::GlobalRef,
     pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
@@ -61,7 +48,6 @@ pub struct AsyncModule {
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
-    pub(crate) any_task: bun_event_loop::AnyTask::AnyTask,
 }
 
 struct PackageDownloadError<'a> {
@@ -113,6 +99,10 @@ impl Queue {
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+}
+
+impl bun_event_loop::Taskable for AsyncModule {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
 }
 
 impl AsyncModule {
@@ -252,11 +242,10 @@ unsafe extern "C" {
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID};
 
-use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
+use crate::event_loop::{ConcurrentTaskItem, Task};
 
 /// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
@@ -651,51 +640,26 @@ impl AsyncModule {
             string_buf,
             referrer_len,
             specifier_len,
-            package_json: opts.package_json.map(core::ptr::NonNull::from),
-            loader: opts.loader.to_api(),
-            hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
-            any_task: AnyTask::AnyTask::default(),
         })
     }
 
     pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
-        // The caller
-        // (`Queue::poll_modules`) removes the element by value and passes it
-        // here, so `Box::new(self)` is a single ownership transfer with no
-        // `ptr::read` and no double-Drop.
-        let clone = bun_core::heap::into_raw(Box::new(self));
         jsc_vm.modules.scheduled += 1;
-        // SAFETY: clone is a valid heap::alloc allocation owned by the
-        // task queue until on_done reclaims it via heap::take; we hold
-        // the only reference here.
-        unsafe {
-            // Hand-written task shim (option (b) in event_loop/AnyTask.rs).
-            (*clone).any_task = AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
-                callback: |p| {
-                    // SAFETY: `p` is the `clone` heap allocation registered as
-                    // `ctx` above; `on_done` reclaims it via `heap::take`.
-                    Self::on_done(p.cast());
-                    Ok(())
-                },
-            };
-            jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
-        }
+        jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
-    /// # Safety
-    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
-    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
-    pub(crate) unsafe fn on_done(this: *mut AsyncModule) {
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box `done()` handed to the task queue"
+    )]
+    pub fn on_done(mut this: Box<AsyncModule>) {
         jsc::mark_binding();
-        // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
-        let this = unsafe { &mut *this };
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
         // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
@@ -754,8 +718,6 @@ impl AsyncModule {
                 &mut ref_,
             )
         });
-        // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // write! into Vec<u8>
@@ -1249,11 +1211,10 @@ impl AsyncModule {
         self.parse_result = parse_result;
         // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // reads (`is_commonjs_module` / `input_fd`) above the move so we
+        // read (`is_commonjs_module`) above the move so we
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let input_fd = self.parse_result.input_fd;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
@@ -1324,6 +1285,10 @@ impl AsyncModule {
             );
         }
 
+        // No watcher registration here: `maybe_watch_file` already ran before
+        // the enqueue, and the fd the parse opened may have been closed (and
+        // the number recycled) by the transpile frame's fd guard.
+
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
@@ -1335,37 +1300,6 @@ impl AsyncModule {
                     None,
                 )
             };
-
-            if let Some(fd_) = input_fd {
-                if bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set
-                    // when `is_watcher_enabled()`; cast recovers the
-                    // concrete type (matches VirtualMachine.rs:2301).
-                    let watcher = unsafe {
-                        &mut *(*jsc_vm)
-                            .bun_watcher
-                            .cast::<crate::hot_reloader::ImportWatcher>()
-                    };
-                    // `bun_watcher::PackageJSON` is an opaque
-                    // forward-decl of `bun_resolver::PackageJSON`;
-                    // the watcher only stores the pointer, so cast through.
-                    // SAFETY: `package_json` (when set) is a VM-lifetime
-                    // backref — outlives the watcher entry.
-                    let package_json = self
-                        .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
-                    let _ = watcher.add_file::<true>(
-                        fd_,
-                        path.text,
-                        self.hash,
-                        bun_ast::Loader::from_api(self.loader),
-                        Fd::INVALID,
-                        package_json,
-                    );
-                }
-            }
 
             resolved_source.is_commonjs_module = is_commonjs_module;
 
