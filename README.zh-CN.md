@@ -20,6 +20,18 @@ Poly 的目标不是把一种语言藏在 RPC 服务后面，而是让两种语�
 > Poly 仍处于工程原型阶段。目前已经具备共享运行时和底层同进程调用桥；
 > 跨语言 import、统一依赖管理和应用打包仍属于路线图能力。
 
+## 衍生自 Bun
+
+Poly 是 [Bun](https://bun.sh) 的分支 —— Bun 是 JavaScript/TypeScript 运行时
+与工具链（原 `oven-sh/bun`）。本仓库包含 Bun 的完整源码与历史：
+JavaScriptCore、兼容 npm 的包管理器、bundler、测试运行器和 Bun Shell 都来自
+Bun，Rust host 与内嵌的 RustPython 解释器在此基础上叠加。
+
+分支起点为 Bun 提交
+[`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)，
+后续上游变更通过显式 merge 提交跟踪（见[同步 Bun 上游](#同步-bun-上游)）。
+Poly 沿用 Bun 的 MIT 许可。
+
 ## 目标体验
 
 Python 文件应该是模块，而不是服务：
@@ -143,9 +155,7 @@ cargo test -p poly_python
 构建工具链。完整的 Windows 和 Linux 环境可参考
 [Bun integration 工作流](.github/workflows/bun-integration.yml)。
 
-这个 fork 从 Bun 提交
-[`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)，
-开始建立，后续上游更新通过显式 merge commit 同步。
+Poly 衍生自 Bun —— fork 起点与上游跟踪策略见[衍生自 Bun](#衍生自-bun)。
 
 #### Windows
 
