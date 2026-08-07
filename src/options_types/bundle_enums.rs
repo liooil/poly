@@ -221,6 +221,7 @@ impl LoaderExt for Loader {
             Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
             Loader::Md => api::Loader::md,
             Loader::Py => api::Loader::file,
+            Loader::Sql | Loader::C => api::Loader::file,
         }
     }
 

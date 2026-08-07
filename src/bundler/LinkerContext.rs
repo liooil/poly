@@ -2959,7 +2959,9 @@ impl<'a> LinkerContext<'a> {
                         | Loader::Html
                         | Loader::SqliteEmbedded
                         | Loader::Md
-                        | Loader::Py => {
+                        | Loader::Py
+                        | Loader::Sql
+                        | Loader::C => {
                             log.add_error_fmt(
                                 Some(source),
                                 record.range.loc,

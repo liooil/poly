@@ -2129,6 +2129,64 @@ fn transpile_source_code_inner(
         }));
     }
 
+    // ── cheap-language entrypoints (.sql / .c) ──────────────────────────────
+    // `.sql` / `.c` *entrypoints* (run as `poly app.sql` etc.) become
+    // bootstrap modules that execute the file in-process: SQLite
+    // (`bun:sqlite` exec) for `.sql`, embedded TinyCC for `.c`. `.sh` entries
+    // are handled natively in `run_command.rs::boot` (Bun Shell interpreter
+    // before JSC init) and never reach this module loader. Non-entry imports
+    // keep the per-loader behavior in the match below.
+    if matches!(loader, L::Sql | L::C) {
+        let hash = bun_watcher::Watcher::get_hash(path.text);
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
+        let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
+        if is_main {
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            if global_object.is_null() {
+                return Err(crate::Error::NotSupported);
+            }
+            let module_path = String::from_utf8_lossy(path.text).into_owned();
+            let module_json = serde_json::to_string(&module_path).unwrap_or_else(|_| "\"\"".into());
+            let bootstrap = match loader {
+                // SQLite: execute the script via exec against an in-memory
+                // database (schema/migration style). Connection configuration
+                // (`poly.toml` / `--database`) is a later milestone.
+                L::Sql => format!(
+                    "import {{ Database }} from \"bun:sqlite\";\n\
+                     const __db = new Database(\":memory:\");\n\
+                     try {{\n\
+                       __db.exec(await Bun.file({module_json}).text());\n\
+                     }} catch (__e) {{\n\
+                       console.error(__e);\n\
+                       process.exit(1);\n\
+                     }}\n"
+                ),
+                // C: compile in-process with embedded TinyCC and call the
+                // entry function. `.c` entrypoints must define
+                // `int main(void)`; its return value becomes the exit code.
+                L::C => format!(
+                    "import {{ cc }} from \"bun:ffi\";\n\
+                     try {{\n\
+                       const __r = cc({{ source: {module_json}, symbols: {{ main: {{ args: [], returns: \"int\" }} }} }});\n\
+                       process.exit(__r.symbols.main() ?? 0);\n\
+                     }} catch (__e) {{\n\
+                       console.error(__e);\n\
+                       process.exit(1);\n\
+                     }}\n"
+                ),
+                _ => unreachable!("guard narrowed to Sql/C"),
+            };
+            return Ok(OwnedResolvedSource::from(ResolvedSource {
+                source_code: bun_core::String::clone_utf8(bootstrap.as_bytes()),
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                tag: ResolvedSourceTag::Esm,
+                ..Default::default()
+            }));
+        }
+    }
+
     match loader {
         // ────────────────────────────────────────────────────────────────────
         // JS-like + JSON/TOML/YAML/text/md — the parse→print path.
@@ -3396,6 +3454,24 @@ fn transpile_source_code_inner(
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
             }))
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // .sql / .c — entrypoints only (bootstrap synthesized above the match).
+        // ────────────────────────────────────────────────────────────────────
+        L::Sql | L::C => {
+            if global_object.is_null() {
+                return Err(crate::Error::NotSupported);
+            }
+            // SAFETY: null-checked above; `global_object` is the live
+            // per-thread global.
+            let global = unsafe { &*global_object };
+            let name = if loader == L::Sql { ".sql" } else { ".c" };
+            return Err(global
+                .throw_type_error(format_args!(
+                    "cannot import {name} module: importing {name} files is not supported yet (only running them as entrypoints)"
+                ))
+                .into());
         }
 
         // ────────────────────────────────────────────────────────────────────

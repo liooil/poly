@@ -65,10 +65,11 @@ function systemLibs(cfg: Config): string[] {
       // (compiler-rt builtins). -llog for __android_log_*.
       libs.push("-lc", "-lm", "-llog");
     } else {
-      // RustPython's `_ctypes` module uses the system libffi. Cargo records
-      // that native dependency, but Bun links Rust through a static archive,
-      // so the final C++ link must carry the library explicitly.
-      libs.push("-lc", "-lpthread", "-ldl", "-lffi");
+      // RustPython's `_ctypes` module uses the system libffi, and its
+      // `lzma` module uses the system liblzma. Cargo records those native
+      // dependencies, but Bun links Rust through a static archive, so the
+      // final C++ link must carry the libraries explicitly.
+      libs.push("-lc", "-lpthread", "-ldl", "-lffi", "-llzma");
       // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
       // The static path needs to be the actual file path for lld to find it;
       // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets

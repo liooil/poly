@@ -218,6 +218,25 @@ GC 生命周期互操作。子进程、仅 AOT 动态库以及先编译为 Wasm/
 - [ ] 禁止或 capability-gate LuaJIT FFI、`loadlib`、filesystem、network 和 debug API
 - [ ] 将 LuaJIT 加入统一 interop、GC、重入、取消和资源限额 conformance suite
 
+### C / 内嵌 TinyCC：已入实施顺序的便宜语言
+
+C 经 Poly 内嵌的 TinyCC（bun:ffi `cc`，进程内编译到本机机器码、无子进程）是
+当前成本最低的第三语言候选，已实现 v1 入口分派：`.c` 入口编译后在进程内
+调用 `int main(void)`，其返回值成为进程退出码。
+
+- [x] `.c` 入口分派（`poly app.c`；要求入口定义 `int main(void)`）
+- [x] `poly repl` 内 `.c` 模式（v2：真正的 REPL 语义 —— 无分号输入按表达式求值并回显
+      值；`;`/`}` 结尾输入按声明（文件作用域，持久）或语句（单次执行，副作用不重复）
+      分类；函数定义/递归/调用可用。限制：TinyCC 每次输入整体重编译，赋值语句对
+      文件作用域变量的修改不跨输入持久（有明确警告）；指针/结构体返回值暂不导出）
+- [x] v1 双向 interop：C REPL 编译的函数按名字发现（正则解析签名）并暴露为
+      `globalThis.__polyC[name]`，JS 直接调用；Python 经 `poly.c(name, ...)` 调用
+- [ ] C 回调 JS/Python、GC 生命周期与释放协议、指针/结构体返回值与复杂参数
+- [ ] 与 LuaJIT 相同的准入评估：内存/指令限额、取消、可执行内存与代码签名
+      影响、各 Native Profile 平台验证
+- [ ] 只有通过完整 interop、重入、GC 与资源限额 conformance，才计入
+      Native Profile 门禁；v1 入口分派不构成完整平台支持
+
 ### CoreCLR / C#：暂缓研究
 
 C# 暂不进入实施顺序，也不作为当前 Native Profile、Android 或统一 REPL 的发布
@@ -244,16 +263,21 @@ Bun Shell 拥有自己的 lexer、parser 和 interpreter，提供跨平台的 ba
 本身的语义创建子进程。
 
 - [x] 当前 Poly 可执行文件可从 JS 通过 `import { $ } from "bun"` 调用内建命令
-- [ ] 将 `.sh` 与明确的 Poly Shell 后缀纳入入口分派、模块图和 bundle
+- [x] `.sh` 入口分派（原生 Bun Shell 解释器，JSC 初始化前运行；`poly app.sh`，exit code 透传）
+- [x] `poly repl` 内 `.sh` 模式（每输入经 Bun Shell 进程内求值，返回 exit code）
+- [ ] `.sh` 模块图与 bundle 纳入；REPL 的 cwd/env/shell variables 持久化、multiline、补全与 history
 - [ ] `poly repl shell` 持久保存 cwd、environment 和 shell variables
 - [ ] 为 pipe、redirect、command substitution 和 incomplete construct 实现
       multiline 输入、补全、history 与结构化错误
+- [x] 同进程 `poly` shell builtin（REPL Shell 模式内：`poly js <expr>` / `poly python <expr>` / `poly sql <query>`；
+      注意：`.sh` 入口在 JSC 初始化前运行，无 VM，builtin 不可用）
 - [ ] 定义 Python/Lua 的 `poly.shell` API，以及 stdout、stderr、exit code、bytes、
       lines、streaming 和 backpressure 映射
 - [ ] 统一取消、timeout、signal、外部进程清理和 runtime 退出行为
 - [ ] capability-gate 外部命令、filesystem、environment 和 network 访问
 - [ ] 建立 Bash 兼容矩阵，明确不支持或语义不同的 syntax、builtin 和 job control
-- [ ] 评估同进程 `poly` shell builtin，用于调用 JS、Python、Lua module 或 callable
+- [x] 同进程 `poly` shell builtin，用于调用 JS、Python、Lua module 或 callable
+      （REPL Shell 模式内，见上）
 - [ ] 在各 Native Profile 平台验证相同脚本的 quoting、path 和 exit semantics
 
 实现基线参考 [Bun Shell](https://bun.com/docs/runtime/shell) 和
@@ -265,11 +289,15 @@ SQL 以 Bun SQL 的 PostgreSQL、MySQL 和 SQLite 统一 API 为宿主基线；R
 连接、事务和结果游标属于持久会话状态，而不是每条语句重新启动 runtime。
 
 - [x] 当前 Poly 可执行文件可用 `Bun.SQL(":memory:")` 执行 SQLite 查询
-- [ ] 支持 `.sql` 入口和 `poly repl sql --database <name>`
+- [x] `.sql` 入口（`poly app.sql`，内存 SQLite via `bun:sqlite` exec，多语句脚本）
+- [x] `poly repl` 内 `.sql` 模式（会话持久内存 SQLite，结果 JSON 输出；`.editor` 提供多行输入）
+- [ ] `poly repl sql --database <name>`、poly.toml 连接声明与统一连接池
 - [ ] 在 `poly.toml` 声明 SQLite/PostgreSQL/MySQL 连接；secret 只从环境或
       secret provider 注入，不写入 archive、history 或诊断
+- [x] REPL 会话数据库以 `globalThis.__polySql` 暴露给 JS；Python 经内嵌 `poly` 包
+      调用（`poly.sql(query)` / `poly.sqlexec(script)`）
 - [ ] 由 Poly host 统一拥有 connection pool，并向 JS、Python、Lua 暴露
-      `poly.sql`，避免每个 runtime 重复建池
+      `poly.sql`，避免每个 runtime 重复建池；命名连接与 poly.toml 声明
 - [ ] 定义参数协议，禁止跨语言调用退化为字符串拼接 SQL
 - [ ] 映射 null、int64、decimal、float、text、blob、date/time、JSON 和 UUID
 - [ ] 为 row、cursor、streaming、backpressure、取消、timeout 和数据库错误建立
