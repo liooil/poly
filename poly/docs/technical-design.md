@@ -110,13 +110,19 @@ pyproject.toml
 uv.lock
 package.json
 bun.lock
-poly.toml
 ```
+
+`poly.toml` 始终可选，不参与依赖解析或锁定。
+
+Poly 直接链接固定 revision 的 uv Rust crates，并通过 `poly_uv` 适配层
+同进程调用。不得启动 `uv` 可执行文件，也不得调用 uv 面向独立进程的
+`unsafe main(args)` 入口。uv 的内部 API 只允许出现在 `poly_uv` 内，避免
+其不稳定类型扩散到运行时其余部分。
 
 `uv` 的职责限定为：
 
 - 依赖解析与 lock；
-- 下载 sdist / wheel；
+- 下载 wheel；
 - 把包物化到 bundle staging 目录；
 - 提供缓存。
 
@@ -127,6 +133,20 @@ Poly 的职责：
 - 用 RustPython 做 smoke import；
 - 输出兼容性报告；
 - 决定哪些文件进入 bundle。
+
+首个依赖管理切片只接受无需构建的纯 Python wheel。sdist 构建和原生
+CPython wheel 均不能通过外部 Python、构建后端或其他子进程完成；在有
+同进程实现之前应明确拒绝。
+
+`poly_uv` 使用 uv 自己的 `Lock::from_toml` 验证 `uv.lock`，并使用 uv 的
+wheel filename/tag 类型生成 RustPython 安装计划。当前保守边界只接受
+包含通用 Python 3 tag、`none` ABI 与 `any` platform 的 wheel；具体包仍
+必须在物化后通过 RustPython smoke import。
+
+物化阶段先按 lock 中的文件名与 SHA-256 校验本地 wheel，再用
+`uv_extract` 同进程解包，并给 `uv_install_wheel` 提供 Poly 自己的
+`Layout`，把 `purelib`/`platlib` 直接指向 `.poly/python`。这条路径不需要
+发现、启动或伪造 CPython virtualenv。
 
 ## 7. Bundle
 

@@ -12,6 +12,7 @@ Polyglot Runtime 自身的代码依据仓库根目录的 [MIT License](LICENSE)
 | JavaScriptCore / WebKit | Bun 固定并打补丁的版本 | LGPL-2.0 | Bun 静态链接该组件；发布包必须提供许可文本以及修改、重新构建和重新链接所需的信息或材料 |
 | TinyCC | Bun 构建固定的版本 | LGPL-2.1 | Bun 静态链接的组件之一 |
 | RustPython | 0.5.0 | MIT | 作为 Rust crate 链接，并冻结 Python 标准库 |
+| uv | 0.12.3 (`5072309`) | MIT OR Apache-2.0 | 固定 revision 的 Rust crates，同进程用于 Python 项目发现、解析、锁定与依赖物化；不调用 uv 子进程 |
 
 Bun 还静态链接或嵌入 BoringSSL、libarchive、Brotli、zstd、ICU、
 libuv、uSockets 和其他组件。完整、权威的清单必须以
