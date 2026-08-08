@@ -177,7 +177,7 @@ function mountModal() {
       elem("footer", null, [
         (domFooterText = elemText("div", null, "")),
         elem("div", { class: "flex" }),
-        elemText("div", null, "Bun v" + config.bun),
+        elemText("div", null, "Poly v" + config.bun),
       ]),
     ]),
   ]);

@@ -20,8 +20,8 @@
           "completionType": "javascript_files"
         }
       ],
-      "examples": ["bun run ./index.js", "bun run ./index.tsx", "bun run dev", "bun run lint"],
-      "usage": "Usage: bun run [flags] <file or script>",
+      "examples": ["poly run ./index.js", "poly run ./index.tsx", "poly run dev", "poly run lint"],
+      "usage": "Usage: poly run [flags] <file or script>",
       "documentationUrl": "https://bun.com/docs/cli/run",
       "dynamicCompletions": {
         "scripts": true,
@@ -155,8 +155,8 @@
           "completionType": "test_files"
         }
       ],
-      "examples": ["bun test", "bun test foo bar", "bun test --test-name-pattern baz"],
-      "usage": "Usage: bun test [flags] [<patterns>]",
+      "examples": ["poly test", "poly test foo bar", "poly test --test-name-pattern baz"],
+      "usage": "Usage: poly test [flags] [<patterns>]",
       "documentationUrl": "https://bun.com/docs/cli/test",
       "dynamicCompletions": {
         "files": true
@@ -167,8 +167,8 @@
       "description": "Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.",
       "flags": [
         {
-          "name": "bun",
-          "description": "Force the command to run with Bun instead of Node.js",
+          "name": "poly",
+          "description": "Force the command to run with Poly instead of Node.js",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -196,9 +196,9 @@
         }
       ],
       "examples": [],
-      "usage": "Usage: bunx [flags] <package><@version> [flags and arguments for the package]",
+      "usage": "Usage: polyx [flags] <package><@version> [flags and arguments for the package]",
       "dynamicCompletions": {},
-      "aliases": ["bunx"]
+      "aliases": ["polyx"]
     },
     "repl": {
       "name": "repl",
@@ -213,12 +213,12 @@
         }
       ],
       "examples": [],
-      "usage": "Usage: bun repl [options]",
+      "usage": "Usage: poly repl [options]",
       "dynamicCompletions": {}
     },
     "exec": {
       "name": "exec",
-      "description": "Execute a shell script directly from Bun.",
+      "description": "Execute a shell script directly from Poly.",
       "flags": [],
       "positionalArgs": [
         {
@@ -229,8 +229,8 @@
           "completionType": "script"
         }
       ],
-      "examples": ["bun exec \"echo hi\"", "bun exec \"echo \\\"hey friends\\\"!\""],
-      "usage": "Usage: bun exec <script>",
+      "examples": ["poly exec \"echo hi\"", "poly exec \"echo \\\"hey friends\\\"!\""],
+      "usage": "Usage: poly exec <script>",
       "dynamicCompletions": {}
     },
     "install": {
@@ -512,7 +512,7 @@
         {
           "name": "analyze",
           "shortName": "a",
-          "description": "Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)",
+          "description": "Analyze & install all dependencies of files passed as arguments recursively (using Poly's bundler)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -539,8 +539,8 @@
           "type": "string"
         }
       ],
-      "examples": ["bun install", "bun install --production"],
-      "usage": "Usage: bun install [flags] <name>@<version>",
+      "examples": ["poly install", "poly install --production"],
+      "usage": "Usage: poly install [flags] <name>@<version>",
       "aliases": ["i"],
       "documentationUrl": "https://bun.com/docs/cli/install.",
       "dynamicCompletions": {}
@@ -816,7 +816,7 @@
         {
           "name": "analyze",
           "shortName": "a",
-          "description": "Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)",
+          "description": "Recursively analyze & install dependencies of files passed as arguments (using Poly's bundler)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -845,14 +845,14 @@
         }
       ],
       "examples": [
-        "bun add zod",
-        "bun add zod@next",
-        "bun add zod@3.0.0",
-        "bun add -d typescript",
-        "bun add --optional lodash",
-        "bun add --peer esbuild"
+        "poly add zod",
+        "poly add zod@next",
+        "poly add zod@3.0.0",
+        "poly add -d typescript",
+        "poly add --optional lodash",
+        "poly add --peer esbuild"
       ],
-      "usage": "Usage: bun add [flags] <package><@version>",
+      "usage": "Usage: poly add [flags] <package><@version>",
       "aliases": ["a"],
       "documentationUrl": "https://bun.com/docs/cli/add.",
       "dynamicCompletions": {
@@ -1113,8 +1113,8 @@
           "completionType": "installed_package"
         }
       ],
-      "examples": ["bun remove ts-node"],
-      "usage": "Usage: bun remove [flags] [<packages>]",
+      "examples": ["poly remove ts-node"],
+      "usage": "Usage: poly remove [flags] [<packages>]",
       "aliases": ["rm"],
       "documentationUrl": "https://bun.com/docs/cli/remove.",
       "dynamicCompletions": {
@@ -1405,8 +1405,8 @@
           "type": "string"
         }
       ],
-      "examples": ["bun update", "bun update --latest", "bun update -i", "bun update zod jquery@3"],
-      "usage": "Usage: bun update [flags] <name>@<version>",
+      "examples": ["poly update", "poly update --latest", "poly update -i", "poly update zod jquery@3"],
+      "usage": "Usage: poly update [flags] <name>@<version>",
       "documentationUrl": "https://bun.com/docs/cli/update.",
       "dynamicCompletions": {}
     },
@@ -1430,14 +1430,14 @@
           "type": "string"
         }
       ],
-      "examples": ["bun audit", "bun audit --json"],
-      "usage": "Usage: bun audit [flags]",
+      "examples": ["poly audit", "poly audit --json"],
+      "usage": "Usage: poly audit [flags]",
       "documentationUrl": "https://bun.com/docs/install/audit.",
       "dynamicCompletions": {}
     },
     "outdated": {
       "name": "outdated",
-      "description": "bun outdated v1.2.20-canary.166 (4deeadd5)",
+      "description": "poly outdated v1.2.20-canary.166 (4deeadd5)",
       "flags": [
         {
           "name": "config",
@@ -1706,15 +1706,15 @@
         }
       ],
       "examples": [
-        "bun outdated",
-        "bun outdated --filter=\"*\"",
-        "bun outdated --filter=\"./app/*\"",
-        "bun outdated --filter=\"!frontend\"",
-        "bun outdated jquery",
-        "bun outdated \"is-*\"",
-        "bun outdated \"!is-even\""
+        "poly outdated",
+        "poly outdated --filter=\"*\"",
+        "poly outdated --filter=\"./app/*\"",
+        "poly outdated --filter=\"!frontend\"",
+        "poly outdated jquery",
+        "poly outdated \"is-*\"",
+        "poly outdated \"!is-even\""
       ],
-      "usage": "Usage: bun outdated [flags] [filter]",
+      "usage": "Usage: poly outdated [flags] [filter]",
       "documentationUrl": "https://bun.com/docs/cli/outdated.",
       "dynamicCompletions": {}
     },
@@ -1972,8 +1972,8 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun link", "bun link <package>"],
-      "usage": "Usage: bun link [flags] [<packages>]",
+      "examples": ["poly link", "poly link <package>"],
+      "usage": "Usage: poly link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}
     },
@@ -2224,14 +2224,14 @@
           "type": "string"
         }
       ],
-      "examples": ["bun unlink"],
-      "usage": "Usage: bun unlink [flags]",
+      "examples": ["poly unlink"],
+      "usage": "Usage: poly unlink [flags]",
       "documentationUrl": "https://bun.com/docs/cli/unlink.",
       "dynamicCompletions": {}
     },
     "publish": {
       "name": "publish",
-      "description": "bun publish v1.2.20-canary.166 (4deeadd5)",
+      "description": "poly publish v1.2.20-canary.166 (4deeadd5)",
       "flags": [
         {
           "name": "config",
@@ -2526,11 +2526,11 @@
         }
       ],
       "examples": [
-        "bun publish --dry-run",
-        "bun publish --access public",
-        "bun publish --tag next ./path/to/tarball.tgz"
+        "poly publish --dry-run",
+        "poly publish --access public",
+        "poly publish --tag next ./path/to/tarball.tgz"
       ],
-      "usage": "Usage: bun publish [flags] [dist]",
+      "usage": "Usage: poly publish [flags] [dist]",
       "documentationUrl": "https://bun.com/docs/cli/publish.",
       "dynamicCompletions": {}
     },
@@ -2804,11 +2804,11 @@
         }
       ],
       "examples": [
-        "bun patch jquery",
-        "bun patch --commit 'node_modules/jquery'",
-        "bun patch --patches-dir 'my-patches' 'node_modules/jquery'"
+        "poly patch jquery",
+        "poly patch --commit 'node_modules/jquery'",
+        "poly patch --patches-dir 'my-patches' 'node_modules/jquery'"
       ],
-      "usage": "Usage: bun patch [flags or options] <package>@<version>",
+      "usage": "Usage: poly patch [flags or options] <package>@<version>",
       "documentationUrl": "https://bun.com/docs/install/patch.",
       "dynamicCompletions": {}
     },
@@ -2831,7 +2831,7 @@
         }
       ],
       "examples": [],
-      "usage": "Usage: bun pm [flags] [<command>]",
+      "usage": "Usage: poly pm [flags] [<command>]",
       "documentationUrl": "https://bun.com/docs/cli/pm.",
       "subcommands": {
         "pack": {
@@ -2866,7 +2866,7 @@
         },
         "view": {
           "name": "view",
-          "description": "name[@version]  view package metadata from the registry (use `bun info` instead)",
+          "description": "name[@version]  view package metadata from the registry (use `poly info` instead)",
           "flags": [],
           "positionalArgs": []
         },
@@ -3218,8 +3218,8 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun info react", "bun info react@18.0.0", "bun info react version --json"],
-      "usage": "Usage: bun info [flags] <package>[@<version>]",
+      "examples": ["poly info react", "poly info react@18.0.0", "poly info react version --json"],
+      "usage": "Usage: poly info [flags] <package>[@<version>]",
       "documentationUrl": "https://bun.com/docs/cli/info.",
       "dynamicCompletions": {}
     },
@@ -3236,7 +3236,7 @@
         },
         {
           "name": "compile",
-          "description": "Generate a standalone Bun executable containing your bundled code. Implies --production",
+          "description": "Generate a standalone Poly executable containing your bundled code. Implies --production",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3461,7 +3461,7 @@
         },
         {
           "name": "app",
-          "description": "(EXPERIMENTAL) Build a web app for production using Bun Bake.",
+          "description": "(EXPERIMENTAL) Build a web app for production using Poly Bake.",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3514,11 +3514,11 @@
       ],
       "positionalArgs": [],
       "examples": [
-        "bun build --outfile=bundle.js ./src/index.ts",
-        "bun build --minify --splitting --outdir=out ./index.jsx ./lib/worker.ts",
-        "Bundle code to be run in Bun (reduces server startup time)",
-        "bun build --target=bun --outfile=server.js ./server.ts",
-        "bun build --compile --outfile=my-app ./cli.ts"
+        "poly build --outfile=bundle.js ./src/index.ts",
+        "poly build --minify --splitting --outdir=out ./index.jsx ./lib/worker.ts",
+        "Bundle code to be run in Poly (reduces server startup time)",
+        "poly build --target=bun --outfile=server.js ./server.ts",
+        "poly build --compile --outfile=my-app ./cli.ts"
       ],
       "usage": "Usage:",
       "documentationUrl": "https://bun.com/docs/bundler",
@@ -3528,7 +3528,7 @@
     },
     "init": {
       "name": "init",
-      "description": "Initialize a Bun project in the current directory.",
+      "description": "Initialize a Poly project in the current directory.",
       "flags": [
         {
           "name": "help",
@@ -3576,13 +3576,13 @@
           "type": "string"
         }
       ],
-      "examples": ["bun init", "bun init --yes", "bun init --react", "bun init --react=tailwind my-app"],
-      "usage": "Usage: bun init [flags] [<folder>]",
+      "examples": ["poly init", "poly init --yes", "poly init --react", "poly init --react=tailwind my-app"],
+      "usage": "Usage: poly init [flags] [<folder>]",
       "dynamicCompletions": {}
     },
     "create": {
       "name": "create",
-      "description": "bun create <MyReactComponent.(jsx|tsx)>",
+      "description": "poly create <MyReactComponent.(jsx|tsx)>",
       "flags": [],
       "positionalArgs": [],
       "examples": [],
@@ -3593,7 +3593,7 @@
     },
     "upgrade": {
       "name": "upgrade",
-      "description": "Upgrade Bun",
+      "description": "Upgrade Poly",
       "flags": [],
       "positionalArgs": [
         {
@@ -3603,8 +3603,8 @@
           "type": "string"
         }
       ],
-      "examples": ["bun upgrade", "bun upgrade --stable"],
-      "usage": "Usage: bun upgrade [flags]",
+      "examples": ["poly upgrade", "poly upgrade --stable"],
+      "usage": "Usage: poly upgrade [flags]",
       "documentationUrl": "https://bun.com/docs/installation#upgrading",
       "dynamicCompletions": {}
     }
@@ -3619,7 +3619,7 @@
     },
     {
       "name": "hot",
-      "description": "Enable auto reload in the Bun runtime, test runner, or bundler",
+      "description": "Enable auto reload in the Poly runtime, test runner, or bundler",
       "hasValue": false,
       "required": false,
       "multiple": false
@@ -3665,7 +3665,7 @@
     },
     {
       "name": "inspect",
-      "description": "Activate Bun's debugger",
+      "description": "Activate Poly's debugger",
       "hasValue": true,
       "valueType": "val",
       "required": false,
@@ -3673,7 +3673,7 @@
     },
     {
       "name": "inspect-wait",
-      "description": "Activate Bun's debugger, wait for a connection before executing",
+      "description": "Activate Poly's debugger, wait for a connection before executing",
       "hasValue": true,
       "valueType": "val",
       "required": false,
@@ -3681,7 +3681,7 @@
     },
     {
       "name": "inspect-brk",
-      "description": "Activate Bun's debugger, set breakpoint on first line of code and wait",
+      "description": "Activate Poly's debugger, set breakpoint on first line of code and wait",
       "hasValue": true,
       "valueType": "val",
       "required": false,
@@ -3696,7 +3696,7 @@
     },
     {
       "name": "no-install",
-      "description": "Disable auto install in the Bun runtime",
+      "description": "Disable auto install in the Poly runtime",
       "hasValue": false,
       "required": false,
       "multiple": false
@@ -3738,14 +3738,14 @@
     },
     {
       "name": "prefer-offline",
-      "description": "Skip staleness checks for packages in the Bun runtime and resolve from disk",
+      "description": "Skip staleness checks for packages in the Poly runtime and resolve from disk",
       "hasValue": false,
       "required": false,
       "multiple": false
     },
     {
       "name": "prefer-latest",
-      "description": "Use the latest matching versions of packages in the Bun runtime, always checking npm",
+      "description": "Use the latest matching versions of packages in the Poly runtime, always checking npm",
       "hasValue": false,
       "required": false,
       "multiple": false
@@ -3908,9 +3908,9 @@
       "multiple": false
     },
     {
-      "name": "bun",
+      "name": "poly",
       "shortName": "b",
-      "description": "Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)",
+      "description": "Force a script or package to use Poly's runtime instead of Node.js (via symlinking node)",
       "hasValue": false,
       "required": false,
       "multiple": false
@@ -3942,7 +3942,7 @@
     {
       "name": "config",
       "shortName": "c",
-      "description": "Specify path to Bun config file. Default $cwd/bunfig.toml",
+      "description": "Specify path to Poly config file. Default $cwd/bunfig.toml",
       "hasValue": true,
       "valueType": "val",
       "required": false,
@@ -3968,13 +3968,13 @@
       }
     }
   },
-  "bunGetCompletes": {
+  "polyGetCompletes": {
     "available": true,
     "commands": {
-      "scripts": "bun getcompletes s",
-      "binaries": "bun getcompletes b",
-      "packages": "bun getcompletes a",
-      "files": "bun getcompletes j"
+      "scripts": "poly getcompletes s",
+      "binaries": "poly getcompletes b",
+      "packages": "poly getcompletes a",
+      "files": "poly getcompletes j"
     }
   }
 }

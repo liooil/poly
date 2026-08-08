@@ -171,7 +171,7 @@ impl Options {
                         format_args!(""),
                     );
                     bun_core::prettyln!(
-                        "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
+                        "  <d>usage: polyx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
                     );
                     Global::exit(1);
                 }
@@ -181,7 +181,7 @@ impl Options {
                     format_args!(""),
                 );
                 bun_core::prettyln!(
-                    "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
+                    "  <d>usage: polyx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
                 );
                 Global::exit(1);
             }
@@ -767,7 +767,7 @@ impl BunxCommand {
             .expect("unreachable");
         env_loader
             .map
-            .put(b"npm_lifecycle_event", b"bunx")
+            .put(b"npm_lifecycle_event", b"polyx")
             .expect("unreachable");
         env_loader
             .map
@@ -948,7 +948,7 @@ impl BunxCommand {
             let path_is_nonzero = !path.is_empty();
             write!(
                 &mut v,
-                "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
+                "{tmp}{sep}polyx-{uid}-{pkg}{sep}node_modules{sep}.bin",
                 tmp = BStr::new(temp_dir),
                 sep = bun_paths::SEP as char,
                 uid = uid,
@@ -967,7 +967,7 @@ impl BunxCommand {
         let fs = unsafe { &mut *this_transpiler.fs };
         let uid_digits = bun_core::fmt::digit_count(uid);
         let bunx_cache_dir: &[u8] =
-            &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
+            &path[0..temp_dir.len() + b"/polyx--".len() + package_fmt.len() + uid_digits];
 
         bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
@@ -997,7 +997,7 @@ impl BunxCommand {
 
         if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
             Output::err_generic(
-                "refusing to use bunx cache directory <b>{}<r> because it or a parent directory is not a directory owned by the current user. Remove it and try again.",
+                "refusing to use polyx cache directory <b>{}<r> because it or a parent directory is not a directory owned by the current user. Remove it and try again.",
                 format_args!("{}", BStr::new(bunx_cache_dir)),
             );
             Global::exit(1);
@@ -1297,7 +1297,7 @@ impl BunxCommand {
             uid,
         ) {
             Output::err_generic(
-                "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                "refusing to use polyx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
                 format_args!("{}", BStr::new(bunx_cache_dir)),
             );
             Global::exit(1);

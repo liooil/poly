@@ -245,7 +245,7 @@ function Install-Bun {
     if ($NoCompletions) {
       $env:BUN_NO_INSTALL_COMPLETIONS = "1"
     }
-    # This completions script in general will install some extra stuff, mainly the `bunx` link.
+    # This completions script in general will install some extra stuff, mainly the `polyx` link.
     # It also installs completions.
     $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
     if ($LASTEXITCODE -ne 0) {

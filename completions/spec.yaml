@@ -1,5 +1,5 @@
 ---
-name: bun
+name: poly
 appspec: { version: "0.001" }
 plugins: [-Meta]
 title: A tool for installing and managing JavaScript packages
@@ -11,7 +11,7 @@ options:
     summary: "Change directory"
 
 # subcommands:
-#   bun:
+#   poly:
 
 subcommands:
   run:
@@ -21,7 +21,7 @@ subcommands:
         multiple: false
         completion:
           command_string: >
-            SHELL=zsh bun getcompletes r
+            SHELL=zsh poly getcompletes r
 
     options:
       - silent --Don't echo the command
@@ -45,7 +45,7 @@ subcommands:
             type: file
             required: true
 
-  bun:
+  poly:
     summary: Generate a bundle
     parameters:
       - name: file
@@ -58,7 +58,7 @@ subcommands:
         summary: Use a framework, e.g. "next"
 
   upgrade:
-    summary: Upgrade to the latest version of bun
+    summary: Upgrade to the latest version of poly
 
   dev:
     summary: Start a dev server
@@ -220,7 +220,7 @@ parameters:
   - name: sasdasdds
     completion:
       command_string: >
-        SHELL=zsh bun getcompletes r
+        SHELL=zsh poly getcompletes r
 
 # vim:et:sts=2:sws=2:sw=2:foldmethod=indent
 

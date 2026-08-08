@@ -30,7 +30,7 @@ console.log(JSON.stringify(process.argv.slice(2)));
 `,
     });
 
-    // Install to create the .bunx shim in node_modules/.bin
+    // Install to create the .polyx shim in node_modules/.bin
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       env: bunEnv,
@@ -39,12 +39,12 @@ console.log(JSON.stringify(process.argv.slice(2)));
     });
     await installProc.exited;
 
-    // Verify the .bunx file was created (this is what triggers the fast path)
-    const bunxPath = path.join(String(dir), "node_modules", ".bin", "echo-args-test.bunx");
+    // Verify the .polyx file was created (this is what triggers the fast path)
+    const bunxPath = path.join(String(dir), "node_modules", ".bin", "echo-args-test.polyx");
     expect(fs.existsSync(bunxPath)).toBe(true);
 
     // Run with an empty string argument - this was triggering the panic
-    // We use `bun run` which goes through the same BunXFastPath when .bunx exists
+    // We use `bun run` which goes through the same BunXFastPath when .polyx exists
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "echo-args-test", ""],
       env: bunEnv,

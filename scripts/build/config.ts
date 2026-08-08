@@ -1392,7 +1392,7 @@ function compareVersionStrings(a: string, b: string): number {
 
 /**
  * Find the repository root by walking up from cwd looking for package.json
- * with name "bun". Exported so `resolveToolchain()` in configure.ts can
+ * with name "poly". Exported so `resolveToolchain()` in configure.ts can
  * resolve paths correctly when invoked from ninja (where cwd = build dir).
  */
 export function findRepoRoot(): string {
@@ -1402,7 +1402,7 @@ export function findRepoRoot(): string {
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string };
-        if (pkg.name === "bun") {
+        if (pkg.name === "poly") {
           return dir;
         }
       } catch {

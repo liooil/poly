@@ -1003,7 +1003,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    const contents = fs.readFileSync(actual + ".bunx", "utf16le");
+    const contents = fs.readFileSync(actual + ".polyx", "utf16le");
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
   }

@@ -13,7 +13,7 @@
  * - Context-aware flags
  * - Special cases like bare 'bun' vs 'bun run'
  *
- * Output is saved to completions/bun-cli.json for use in generating
+ * Output is saved to completions/poly-cli.json for use in generating
  * shell completions (fish, bash, zsh).
  */
 
@@ -92,15 +92,15 @@ interface CompletionData {
   bunGetCompletes: {
     available: boolean;
     commands: {
-      scripts: string; // "bun getcompletes s" or "bun getcompletes z"
-      binaries: string; // "bun getcompletes b"
-      packages: string; // "bun getcompletes a <prefix>"
-      files: string; // "bun getcompletes j"
+      scripts: string; // "poly getcompletes s" or "poly getcompletes z"
+      binaries: string; // "poly getcompletes b"
+      packages: string; // "poly getcompletes a <prefix>"
+      files: string; // "poly getcompletes j"
     };
   };
 }
 
-const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "bun";
+const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "poly";
 
 /**
  * Parse flag line from help output
@@ -685,7 +685,7 @@ async function generateCompletions(): Promise<void> {
   }
 
   // Write the JSON file
-  const outputPath = join(completionsDir, "bun-cli.json");
+  const outputPath = join(completionsDir, "poly-cli.json");
   const jsonData = JSON.stringify(completionData, null, 2);
 
   writeFileSync(outputPath, jsonData, "utf8");

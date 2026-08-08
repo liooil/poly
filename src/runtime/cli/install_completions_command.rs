@@ -17,9 +17,9 @@ pub(crate) struct InstallCompletionsCommand;
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
     const BUNX_NAME: &'static str = if bun_core::env::IS_DEBUG {
-        "bunx-debug"
+        "polyx-debug"
     } else {
-        "bunx"
+        "polyx"
     };
 
     #[cfg(not(windows))]
@@ -118,14 +118,14 @@ impl InstallCompletionsCommand {
         let mut bunx_path_buf = WPathBuffer::uninit();
 
         let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
-            w!("bunx-debug.cmd")
+            w!("polyx-debug.cmd")
         } else {
-            w!("bunx.cmd")
+            w!("polyx.cmd")
         };
         let exe_suffix_z: &[u16] = if bun_core::env::IS_DEBUG {
-            w!("bunx-debug.exe\0")
+            w!("polyx-debug.exe\0")
         } else {
-            w!("bunx.exe\0")
+            w!("polyx.exe\0")
         };
 
         let delete_path = strings::concat_buf_t::<u16>(
@@ -183,7 +183,7 @@ impl InstallCompletionsCommand {
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep];
 
-        if !image_dirname.ends_with(w!("bun\\bin")) {
+        if !image_dirname.ends_with(w!("poly\\bin")) {
             return Ok(());
         }
 
@@ -270,7 +270,7 @@ impl InstallCompletionsCommand {
                         "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
                         format_args!(""),
                     );
-                    note!("To manually output completions, run 'bun getcompletes'");
+                    note!("To manually output completions, run 'poly getcompletes'");
                     Global::exit(fail_exit_code);
                 }
                 _ => {}
@@ -520,9 +520,9 @@ impl InstallCompletionsCommand {
             };
 
             let filename: &[u8] = match shell {
-                Shell::Fish => b"bun.fish",
-                Shell::Zsh => b"_bun",
-                Shell::Bash => b"bun.completion.bash",
+                Shell::Fish => b"poly.fish",
+                Shell::Zsh => b"_poly",
+                Shell::Bash => b"poly.completion.bash",
                 _ => unreachable!(),
             };
 

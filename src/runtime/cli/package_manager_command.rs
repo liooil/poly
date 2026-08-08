@@ -263,7 +263,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Npm::WhoamiError::OutOfMemory => bun_core::out_of_memory(),
                         Npm::WhoamiError::NeedAuth => {
                             Output::err_generic(
-                                "missing authentication (run <cyan>`bunx npm login`<r>)",
+                                "missing authentication (run <cyan>`polyx npm login`<r>)",
                                 (),
                             );
                         }
@@ -404,7 +404,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
                 bun_core::prettyln!("Cleared 'bun install' cache");
 
-                'bunx: {
+                'polyx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
                     let tmp_dir = match Dir::open(tmp) {
                         Ok(d) => d,
@@ -415,7 +415,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                                 (bstr::BStr::new(tmp),),
                             );
                             had_err = true;
-                            break 'bunx;
+                            break 'polyx;
                         }
                     };
                     let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
@@ -425,12 +425,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     #[cfg(unix)]
                     {
                         // SAFETY: getuid(2) is always-successful with no preconditions.
-                        write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() })
+                        write!(&mut prefix, "polyx-{}-", unsafe { libc::getuid() })
                             .expect("unreachable");
                     }
                     #[cfg(not(unix))]
                     {
-                        write!(&mut prefix, "bunx-{}-", bun_sys::windows::user_unique_id())
+                        write!(&mut prefix, "polyx-{}-", bun_sys::windows::user_unique_id())
                             .expect("unreachable");
                     }
 
@@ -446,7 +446,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                                     (bstr::BStr::new(tmp),),
                                 );
                                 had_err = true;
-                                break 'bunx;
+                                break 'polyx;
                             }
                         };
                         let name = entry.name.slice_u8();
@@ -461,7 +461,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         }
                     }
 
-                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                    bun_core::prettyln!("Cleared {} cached 'polyx' packages", deleted);
                 }
 
                 Global::exit(if had_err { 1 } else { 0 });

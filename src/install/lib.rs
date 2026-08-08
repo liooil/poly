@@ -508,7 +508,7 @@ impl RunCommand {
         {
             use const_format::concatcp;
 
-            let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+            let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("poly"));
 
             // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
             // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is

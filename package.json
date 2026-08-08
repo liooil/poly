@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "bun",
+  "name": "poly",
   "version": "0.1.0",
   "workspaces": [
     "./packages/bun-types",

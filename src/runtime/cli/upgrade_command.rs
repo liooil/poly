@@ -458,7 +458,7 @@ impl UpgradeCommand {
             refresher.expect("infallible: progress active").refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
-                    "Bun v{} is out, but not for this platform ({}) yet.",
+                    "Poly v{} is out, but not for this platform ({}) yet.",
                     bstr::BStr::new(&name),
                     Version::TRIPLET
                 );
@@ -598,7 +598,7 @@ impl UpgradeCommand {
 
             if version.name().is_none() {
                 bun_core::pretty_errorln!(
-                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expected format)"
+                    "<r><red>error:<r> Poly versions are currently unavailable (the latest version name didn't match the expected format)"
                 );
                 Global::exit(1);
             }
@@ -1348,10 +1348,10 @@ impl UpgradeCommand {
                     bstr::BStr::new(&*version.tag)
                 );
             } else {
-                let bun_v = const_format::concatcp!("bun-v", Global::package_json_version);
+                let bun_v = const_format::concatcp!("poly-v", Global::package_json_version);
 
                 bun_core::pretty_errorln!(
-                    "<r> Upgraded.\n\n<b><green>Welcome to Bun v{}!<r>\n\nWhat's new in Bun v{}:\n\n    <cyan>https://bun.com/blog/release-notes/{}<r>\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nCommit log:\n\n    https://github.com/oven-sh/bun/compare/{}...{}\n",
+                    "<r> Upgraded.\n\n<b><green>Welcome to Poly v{}!<r>\n\nWhat's new in Poly v{}:\n\n    <cyan>https://github.com/liooil/poly/releases/tag/{}<r>\n\nReport any bugs:\n\n    https://github.com/liooil/poly/issues\n\nCommit log:\n\n    https://github.com/liooil/poly/compare/{}...{}\n",
                     bstr::BStr::new(&version_name),
                     bstr::BStr::new(&version_name),
                     bstr::BStr::new(&*version.tag),

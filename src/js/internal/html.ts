@@ -45,10 +45,10 @@ async function start() {
 
       if (arg === "--help") {
         console.log(`
-Bun v${Bun.version} (html)
+Poly v${Bun.version} (html)
 
 Usage:
-  bun [...html-files] [options]
+  poly [...html-files] [options]
 
 Options:
 
@@ -309,7 +309,7 @@ yourself with Bun.serve().
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
     } else {
-      let topLine = `Bun v${Bun.version}`;
+      let topLine = `Poly v${Bun.version}`;
       if (isFirst) {
         if (server.development) {
           topLine += " dev server";

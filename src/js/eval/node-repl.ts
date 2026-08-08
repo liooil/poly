@@ -18,7 +18,7 @@ if (ext) {
   const createInternalRepl = (REPL as Record<symbol, Function>)[Symbol.for("bun.repl.createInternalRepl")];
 
   console.log(
-    `Welcome to Bun v${(globalThis as any).Bun.version} (Node.js-compatible REPL, node:repl ${process.version}).\n` +
+    `Welcome to Poly v${(globalThis as any).Bun.version} (Node.js-compatible REPL, node:repl ${process.version}).\n` +
       'Type ".help" for more information.',
   );
 

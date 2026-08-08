@@ -19,14 +19,14 @@ afterAll(() => {
 });
 
 // POSIX puts a symlink at `.bin/<name>`. Windows writes `<name>.exe` (a copy
-// of the shim PE) plus `<name>.bunx` whose first UTF-16LE field is the target
+// of the shim PE) plus `<name>.polyx` whose first UTF-16LE field is the target
 // path relative to node_modules.
 function binEntry(binDir: string, name: string) {
   return join(binDir, isWindows ? `${name}.exe` : name);
 }
 function readBinTarget(binDir: string, name: string) {
   if (isWindows) {
-    const raw = readFileSync(join(binDir, `${name}.bunx`)).toString("utf16le");
+    const raw = readFileSync(join(binDir, `${name}.polyx`)).toString("utf16le");
     // bin_path is terminated by `"` then NUL; keep only the path and normalize
     // separators so callers can compare against join() output.
     const end = raw.indexOf('"');

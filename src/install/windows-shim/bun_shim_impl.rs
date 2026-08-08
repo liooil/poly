@@ -572,7 +572,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let suffix: &'static [u16] = if IS_STANDALONE {
         bun_core::w!("exe")
     } else {
-        bun_core::w!("bunx")
+        bun_core::w!("polyx")
     };
     if DBG {
         if !image_path_u16.ends_with(suffix) {
@@ -597,17 +597,23 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let mut metadata_handle: HANDLE = core::ptr::null_mut();
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     if IS_STANDALONE {
-        // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-        // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
+        // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.polyx!!!!!!!!!!!!!!!!!!!!'
+        // SAFETY: writing 5 u16s ("polyx") into buf1 at the computed offset, which is in bounds.
         unsafe {
             buf1_u8
                 .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
-                .cast::<[u16; 4]>()
-                .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
+                .cast::<[u16; 5]>()
+                .write_unaligned([
+                    'p' as u16,
+                    'o' as u16,
+                    'l' as u16,
+                    'y' as u16,
+                    'x' as u16,
+                ]);
         }
 
         let path_len_bytes: u16 = u16::try_from(
-            image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 4/* "bunx".len */),
+            image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 5/* "polyx".len */),
         )
         .unwrap();
         let mut nt_name = UNICODE_STRING {
@@ -1419,21 +1425,21 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                         );
                                     }
 
-                                    // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
+                                    // To go from node -> poly, it is a matter of writing four chars, and incrementing a pointer.
                                     //
                                     // lpCommandLine: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
-                                    //                  ^~~ replace these three bytes with 'bun'
-                                    // SAFETY: spawn_command_line[1..4] is within the buffer.
+                                    //                  ^~~~ replace these four bytes with 'poly'
+                                    // SAFETY: spawn_command_line[1..5] is within the buffer.
                                     unsafe {
-                                        let bun = bun_core::w!("bun");
+                                        let poly = bun_core::w!("poly");
                                         core::ptr::copy_nonoverlapping(
-                                            bun.as_ptr(),
+                                            poly.as_ptr(),
                                             spawn_command_line.add(1),
-                                            3,
+                                            4,
                                         );
                                     }
 
-                                    // lpCommandLine: 'nbun "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                                    // lpCommandLine: 'npoly "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
                                     //                  ^ increment pointer by one char
                                     spawn_command_line = unsafe { spawn_command_line.add(1) };
 

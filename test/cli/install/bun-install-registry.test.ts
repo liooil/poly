@@ -522,7 +522,7 @@ describe("whoami", async () => {
     const out = await stdout.text();
     expect(out).toBeEmpty();
     const err = await stderr.text();
-    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(err).toBe("error: missing authentication (run `polyx npm login`)\n");
     expect(await exited).toBe(1);
   });
   test("invalid token", async () => {
@@ -2699,7 +2699,7 @@ describe("binaries", () => {
       expect(
         await Promise.all([
           exists(join(packageDir, "global-bin-dir", "what-bin.exe")),
-          exists(join(packageDir, "global-bin-dir", "what-bin.bunx")),
+          exists(join(packageDir, "global-bin-dir", "what-bin.polyx")),
         ]),
       ).toEqual([true, true]);
     } else {

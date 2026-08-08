@@ -45,7 +45,7 @@ beforeAll(async () => {
   const tmp = isWindows ? tmpdir() : "/tmp";
   const waiting: Promise<void>[] = [];
   readdirSync(tmp).forEach(file => {
-    if (file.startsWith("bunx-") || file.startsWith("bun-x.test")) {
+    if (file.startsWith("bunx-") || file.startsWith("polyx-") || file.startsWith("bun-x.test")) {
       waiting.push(rm(join(tmp, file), { recursive: true, force: true }));
     }
   });
@@ -1183,12 +1183,12 @@ describe("package name aliases", () => {
   });
 });
 
-// Regression test: bunx should not crash on corrupted .bunx files (Windows only)
-// When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
+// Regression test: bunx should not crash on corrupted .polyx files (Windows only)
+// When the .polyx metadata file is corrupted (e.g., missing quote terminator in bin_path),
 // bunx should gracefully fall back to the slow path instead of panicking.
-it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quote", async () => {
-  // First, install a package to create a valid .bunx file
-  // Use typescript which creates both .exe and .bunx files
+it.skipIf(!isWindows)("should not crash on corrupted .polyx file with missing quote", async () => {
+  // First, install a package to create a valid .polyx file
+  // Use typescript which creates both .exe and .polyx files
   // Need to init first to create package.json
   const initProc = spawn({
     cmd: [bunExe(), "init", "-y"],
@@ -1212,14 +1212,14 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
     subprocess1.exited,
   ]);
 
-  // Find the .bunx file
+  // Find the .polyx file
   const binDir = join(x_dir, "node_modules", ".bin");
-  const bunxFile = join(binDir, "tsc.bunx");
+  const bunxFile = join(binDir, "tsc.polyx");
 
   // Verify the file exists before corrupting it
   expect(await Bun.file(bunxFile).exists()).toBe(true);
 
-  // Create a corrupted .bunx file:
+  // Create a corrupted .polyx file:
   // Valid format: [bin_path UTF-16LE]["(quote)][null][shebang][bin_len u32][args_len u32][flags u16]
   // Corrupted: Replace the quote with 'X' but keep valid lengths/flags
   const binPath = Buffer.from("typescript\\bin\\tsc", "utf16le");

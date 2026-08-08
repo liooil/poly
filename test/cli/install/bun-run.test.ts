@@ -1008,9 +1008,9 @@ describe.concurrent("bun run", () => {
   });
 
   // BUN-3MAQ: guards the user-visible contract that a >32,767-u16 environment
-  // block reaches a .bunx child intact. CreateProcessW with
+  // block reaches a .polyx child intact. CreateProcessW with
   // CREATE_UNICODE_ENVIRONMENT has no documented block-size limit. This does
-  // not assert which spawn path (fast .bunx shim vs. libuv fallback) was
+  // not assert which spawn path (fast .polyx shim vs. libuv fallback) was
   // taken, since both are correct; it fails only if the child loses env data
   // or the process crashes. POSIX hits E2BIG first, so Windows-only.
   it.if(isWindows)(
@@ -1048,7 +1048,7 @@ describe.concurrent("bun run", () => {
         expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
       }
 
-      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "print-env-len.bunx")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "print-env-len.polyx")).exists()).toBe(true);
 
       // Two 25,000-char values plus the rest of bunEnv push the serialized
       // block past 32,767 u16s without approaching any per-variable or

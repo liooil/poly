@@ -868,12 +868,12 @@ impl<'a> Linker<'a> {
                 abs_dest.as_bytes(),
             );
             let abs_dest_w_len = abs_dest_w.len();
-            let bunx_suffix = w!(".bunx\x00");
+            let bunx_suffix = w!(".polyx\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
                 .copy_from_slice(bunx_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+            // SAFETY: dest_buf[abs_dest_w_len + ".polyx".len()] == 0 written above
             let abs_bunx_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".polyx".len());
             let _ = sys::unlink_w(abs_bunx_file);
             let exe_suffix = w!(".exe\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
@@ -1130,12 +1130,12 @@ impl<'a> Linker<'a> {
         let abs_dest_w =
             strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
         let abs_dest_w_len = abs_dest_w.len();
-        let bunx_suffix = w!(".bunx\x00");
+        let bunx_suffix = w!(".polyx\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
 
-        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
+        // SAFETY: dest_buf[abs_dest_w_len + ".polyx".len()] == 0 written above
         let abs_bunx_file =
-            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+            bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".polyx".len());
 
         let bunx_file = 'bunx_file: {
             match sys::File::openat_os_path(

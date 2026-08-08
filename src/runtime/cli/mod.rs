@@ -841,13 +841,18 @@ pub mod command {
     // stays silent on unknown flags.
     // ──────────────────
     fn is_bun_x(argv0: &[u8]) -> bool {
+        // `polyx` is the primary shim name; `bunx` is accepted for legacy
+        // shims already installed in existing node_modules.
         #[cfg(windows)]
         {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+            return strings::ends_with(argv0, b"polyx.exe")
+                || strings::ends_with(argv0, b"polyx")
+                || strings::ends_with(argv0, b"bunx.exe")
+                || strings::ends_with(argv0, b"bunx");
         }
         #[cfg(not(windows))]
         {
-            strings::ends_with(argv0, b"bunx")
+            strings::ends_with(argv0, b"polyx") || strings::ends_with(argv0, b"bunx")
         }
     }
 
@@ -978,7 +983,7 @@ pub mod command {
         if x == RootCommandMatcher::case(b"init") {
             return Tag::InitCommand;
         }
-        if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
+        if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"poly") {
             return Tag::BuildCommand;
         }
         if x == RootCommandMatcher::case(b"discord") {
@@ -1639,7 +1644,7 @@ pub mod command {
 
     const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[
         b"build", b"install", b"add", b"run", b"update", b"link", b"unlink", b"remove", b"create",
-        b"bun", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
+        b"poly", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
     ];
 
     // DEFAULT_COMPLETIONS_LIST ++ extras; hand-rolled join (small, fixed).
@@ -1653,7 +1658,7 @@ pub mod command {
         b"unlink",
         b"remove",
         b"create",
-        b"bun",
+        b"poly",
         b"upgrade",
         b"discord",
         b"test",

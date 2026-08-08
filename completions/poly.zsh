@@ -1,6 +1,6 @@
-#compdef bun
+#compdef poly
 
-_bun_add_completion() {
+_poly_add_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :->package' \
@@ -41,17 +41,17 @@ _bun_add_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     package)
-        _bun_add_param_package_completion
+        _poly_add_param_package_completion
 
         ;;
     esac
 }
 
-_bun_unlink_completion() {
+_poly_unlink_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :->package' \
@@ -85,17 +85,17 @@ _bun_unlink_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     package)
-        # TODO: error: bun unlink {packageName} not implemented yet
+        # TODO: error: poly unlink {packageName} not implemented yet
 
         ;;
     esac
 }
 
-_bun_link_completion() {
+_poly_link_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :->package' \
@@ -129,17 +129,17 @@ _bun_link_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     package)
-        _bun_link_param_package_completion
+        _poly_link_param_package_completion
 
         ;;
     esac
 }
 
-_bun_bun_completion() {
+_poly_poly_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '*: :->file' \
@@ -159,7 +159,7 @@ _bun_bun_completion() {
     esac
 }
 
-_bun_init_completion() {
+_poly_init_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '-y[Answer yes to all prompts]:' \
@@ -168,7 +168,7 @@ _bun_init_completion() {
 
 }
 
-_bun_create_completion() {
+_poly_create_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '2: :->cmd2' \
@@ -192,7 +192,7 @@ _bun_create_completion() {
                 '--no-git[Don'"'"'t create a git repository]'
                 '--verbose[verbose]'
                 '--no-package-json[Disable package.json transforms]'
-                '--open[On finish, start bun & open in-browser]'
+                '--open[On finish, start poly & open in-browser]'
             )
 
             # ---- Command: create next
@@ -245,7 +245,7 @@ _bun_create_completion() {
     esac
 }
 
-_bun_pm_completion() {
+_poly_pm_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '2: :->cmd2' \
@@ -342,7 +342,7 @@ _bun_pm_completion() {
     esac
 }
 
-_bun_install_completion() {
+_poly_install_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '--config[Load config(bunfig.toml)]: :->config' \
@@ -382,13 +382,13 @@ _bun_install_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     esac
 }
 
-_bun_remove_completion() {
+_poly_remove_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :->package' \
@@ -422,17 +422,17 @@ _bun_remove_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     package)
-        _bun_remove_param_package_completion
+        _poly_remove_param_package_completion
 
         ;;
     esac
 }
 
-_bun_run_completion() {
+_poly_run_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '2: :->script' \
@@ -494,7 +494,7 @@ _bun_run_completion() {
     case $state in
     script)
         curcontext="${curcontext%:*:*}:bun-grouped"
-        _bun_run_param_script_completion
+        _poly_run_param_script_completion
 
         ;;
     jsx-runtime)
@@ -517,7 +517,7 @@ _bun_run_completion() {
 
 }
 
-_bun_upgrade_completion() {
+_poly_upgrade_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '--canary[Upgrade to canary build]' &&
@@ -525,7 +525,7 @@ _bun_upgrade_completion() {
 
 }
 
-_bun_repl_completion() {
+_poly_repl_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '--help[Print this help menu]' \
@@ -546,13 +546,13 @@ _bun_repl_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     esac
 }
 
-_bun_build_completion() {
+_poly_build_completion() {
     _arguments -s -C \
         '1: :->cmd' \
         '*: :->file' \
@@ -589,7 +589,7 @@ _bun_build_completion() {
     esac
 }
 
-_bun_update_completion() {
+_poly_update_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '-c[Load config(bunfig.toml)]: :->config' \
@@ -623,13 +623,13 @@ _bun_update_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     esac
 }
 
-_bun_outdated_completion() {
+_poly_outdated_completion() {
     _arguments -s -C \
         '--cwd[Set a specific cwd]:cwd' \
         '--verbose[Excessively verbose logging]' \
@@ -639,13 +639,13 @@ _bun_outdated_completion() {
 
     case $state in
     config)
-        _bun_list_bunfig_toml
+        _poly_list_bunfig_toml
 
         ;;
     esac
 }
 
-_bun_test_completion() {
+_poly_test_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :->file' \
@@ -704,7 +704,7 @@ _bun_test_completion() {
 
     case $state in
     file)
-        _bun_test_param_script_completion
+        _poly_test_param_script_completion
 
         ;;
     config)
@@ -745,7 +745,7 @@ _bun() {
         main_commands=(
             'run\:"Run JavaScript with Bun, a package.json script, or a bin" '
             'test\:"Run unit tests with Bun" '
-            'x\:"Install and execute a package bin (bunx)" '
+            'x\:"Install and execute a package bin  (polyx)" '
             'repl\:"Start a REPL session with Bun" '
             'init\:"Start an empty Bun project from a blank template" '
             'create\:"Create a new project from a template (bun c)" '
@@ -768,27 +768,27 @@ _bun() {
     args)
         case $line[1] in
         add|a)
-            _bun_add_completion
+            _poly_add_completion
 
             ;;
         unlink)
-            _bun_unlink_completion
+            _poly_unlink_completion
 
             ;;
         link)
-            _bun_link_completion
+            _poly_link_completion
 
             ;;
         bun)
-            _bun_bun_completion
+            _poly_poly_completion
 
             ;;
         init)
-            _bun_init_completion
+            _poly_init_completion
 
             ;;
         create|c)
-            _bun_create_completion
+            _poly_create_completion
 
             ;;
         x)
@@ -799,43 +799,43 @@ _bun() {
                 ret=0
             ;;
         pm)
-            _bun_pm_completion
+            _poly_pm_completion
 
             ;;
         install|i)
-            _bun_install_completion
+            _poly_install_completion
 
             ;;
         remove|rm)
-            _bun_remove_completion
+            _poly_remove_completion
 
             ;;
         run)
-            _bun_run_completion
+            _poly_run_completion
 
             ;;
         upgrade)
-            _bun_upgrade_completion
+            _poly_upgrade_completion
 
             ;;
         repl)
-            _bun_repl_completion
+            _poly_repl_completion
 
             ;;
         build)
-            _bun_build_completion
+            _poly_build_completion
 
             ;;
         update)
-            _bun_update_completion
+            _poly_update_completion
 
             ;;
         outdated)
-            _bun_outdated_completion
+            _poly_outdated_completion
 
             ;;
         'test')
-            _bun_test_completion
+            _poly_test_completion
 
             ;;
         help)
@@ -855,27 +855,27 @@ _bun() {
             args)
                 case $line[2] in
                 add)
-                    _bun_add_completion
+                    _poly_add_completion
 
                     ;;
                 unlink)
-                    _bun_unlink_completion
+                    _poly_unlink_completion
 
                     ;;
                 link)
-                    _bun_link_completion
+                    _poly_link_completion
 
                     ;;
                 bun)
-                    _bun_bun_completion
+                    _poly_poly_completion
 
                     ;;
                 init)
-                    _bun_init_completion
+                    _poly_init_completion
 
                     ;;
                 create)
-                    _bun_create_completion
+                    _poly_create_completion
 
                     ;;
                 x)
@@ -886,43 +886,43 @@ _bun() {
                         ret=0
                     ;;
                 pm)
-                    _bun_pm_completion
+                    _poly_pm_completion
 
                     ;;
                 install)
-                    _bun_install_completion
+                    _poly_install_completion
 
                     ;;
                 remove)
-                    _bun_remove_completion
+                    _poly_remove_completion
 
                     ;;
                 run)
-                    _bun_run_completion
+                    _poly_run_completion
 
                     ;;
                 upgrade)
-                    _bun_upgrade_completion
+                    _poly_upgrade_completion
 
                     ;;
                 repl)
-                    _bun_repl_completion
+                    _poly_repl_completion
 
                     ;;
                 build)
-                    _bun_build_completion
+                    _poly_build_completion
 
                     ;;
                 update)
-                    _bun_update_completion
+                    _poly_update_completion
 
                     ;;
                 outdated)
-                    _bun_outdated_completion
+                    _poly_outdated_completion
 
                     ;;
                 'test')
-                    _bun_test_completion
+                    _poly_test_completion
 
                     ;;
                 esac
@@ -937,12 +937,12 @@ _bun() {
     esac
 }
 
-_bun_list_bunfig_toml() {
+_poly_list_bunfig_toml() {
     # _alternative "files:file:_files -g '*.toml'"
     _files
 }
 
-_bun_run_param_script_completion() {
+_poly_run_param_script_completion() {
     local -a scripts_list bins
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
@@ -952,7 +952,7 @@ _bun_run_param_script_completion() {
     _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
-_bun_link_param_package_completion() {
+_poly_link_param_package_completion() {
     # Read packages from ~/.bun/install/global/node_modules
     install_env=$BUN_INSTALL
     install_dir=${(P)install_env:-$HOME/.bun}
@@ -963,7 +963,7 @@ _bun_link_param_package_completion() {
     _alternative "dirs:directory:compadd -a packages"
 }
 
-_bun_remove_param_package_completion() {
+_poly_remove_param_package_completion() {
     if ! command -v jq &>/dev/null; then
         return
     fi
@@ -978,7 +978,7 @@ _bun_remove_param_package_completion() {
     fi
 }
 
-_bun_test_param_script_completion() {
+_poly_test_param_script_completion() {
     local -a scripts_list
 
     _alternative "files:file:_files -g '*(_|.)(test|spec).(js|ts|jsx|tsx)'"
@@ -988,7 +988,7 @@ _set_remove() {
     comm -23 <(echo $1 | sort | tr " " "\n") <(echo $2 | sort | tr " " "\n") 2>/dev/null
 }
 
-_bun_add_param_package_completion() {
+_poly_add_param_package_completion() {
 
     IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
     IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
@@ -1017,7 +1017,7 @@ _bun_add_param_package_completion() {
 
 }
 
-__bun_dynamic_comp() {
+__poly_dynamic_comp() {
     local comp=""
 
     for arg in scripts; do

@@ -338,17 +338,17 @@ impl BuildCommand {
                         was_renamed_from_index = outfile != b"index";
                     }
 
-                    if outfile == b"bun" {
+                    if outfile == b"poly" {
                         outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
+                            bun_core::dirname(&first_entry_point).unwrap_or(b"poly"),
                         );
                     }
                 }
 
-                // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-                if outfile == b"bun" || outfile == b"bunx" {
+                // If argv[0] is "poly" or "polyx", we don't check if the binary is standalone
+                if outfile == b"poly" || outfile == b"polyx" {
                     bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile"
+                        "<r><red>error<r><d>:<r> cannot use --compile with an output file named 'poly' because poly won't realize it's a standalone executable. Please choose a different name for --outfile"
                     );
                     Global::exit(1);
                 }
