@@ -62,6 +62,18 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+// Per-language history files: switching modes loads the matching file so
+// each language keeps its own command history (JS stays on the legacy name
+// for backward compatibility).
+fn history_filename_for_mode(mode: ReplMode) -> &'static [u8] {
+    match mode {
+        ReplMode::Js => HISTORY_FILENAME,
+        ReplMode::Python => b".bun_repl_history.py",
+        ReplMode::Shell => b".bun_repl_history.sh",
+        ReplMode::Sql => b".bun_repl_history.sql",
+        ReplMode::C => b".bun_repl_history.c",
+    }
+}
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -184,6 +196,10 @@ impl History {
     }
 
     fn load(&mut self) -> Result<(), crate::Error> {
+        self.load_from(HISTORY_FILENAME)
+    }
+
+    fn load_from(&mut self, filename: &[u8]) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -194,7 +210,7 @@ impl History {
         let mut path_buf = PathBuffer::uninit();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut path_buf,
-            &[home_path, HISTORY_FILENAME],
+            &[home_path, filename],
         );
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
@@ -215,7 +231,20 @@ impl History {
         }
 
         self.position = self.entries.len();
+        self.modified = false;
         Ok(())
+    }
+
+    /// Switch to a different language's history file: save the current
+    /// session's entries, clear the in-memory list, and load the new file.
+    fn switch_mode(&mut self, mode: ReplMode) -> Result<(), crate::Error> {
+        self.save();
+        self.entries.clear();
+        self.position = 0;
+        self.temp_line = None;
+        self.file_path = None;
+        self.modified = false;
+        self.load_from(history_filename_for_mode(mode))
     }
 
     fn save(&mut self) {
@@ -739,7 +768,7 @@ fn cmd_py(repl: &mut Repl, args: &[u8]) -> ReplResult {
         repl.eval_inline(ReplMode::Python, code);
         return ReplResult::SkipEval;
     }
-    repl.mode = ReplMode::Python;
+    repl.switch_mode(ReplMode::Python);
     repl.print(format_args!(
         "{}Switched to Python mode{} (type {} .js {} to switch back)\n",
         Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
@@ -753,7 +782,7 @@ fn cmd_js(repl: &mut Repl, args: &[u8]) -> ReplResult {
         repl.eval_inline(ReplMode::Js, code);
         return ReplResult::SkipEval;
     }
-    repl.mode = ReplMode::Js;
+    repl.switch_mode(ReplMode::Js);
     repl.print(format_args!(
         "{}Switched to JavaScript mode{} (type {} .py {} for Python)\n",
         Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
@@ -767,7 +796,7 @@ fn cmd_sh(repl: &mut Repl, args: &[u8]) -> ReplResult {
         repl.eval_inline(ReplMode::Shell, code);
         return ReplResult::SkipEval;
     }
-    repl.mode = ReplMode::Shell;
+    repl.switch_mode(ReplMode::Shell);
     repl.print(format_args!(
         "{}Switched to Shell mode{} (Bun Shell, in-process; type {} .js {} to switch back)\n",
         Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
@@ -781,7 +810,7 @@ fn cmd_sql(repl: &mut Repl, args: &[u8]) -> ReplResult {
         repl.eval_inline(ReplMode::Sql, code);
         return ReplResult::SkipEval;
     }
-    repl.mode = ReplMode::Sql;
+    repl.switch_mode(ReplMode::Sql);
     repl.print(format_args!(
         "{}Switched to SQL mode{} (session-persistent in-memory SQLite; type {} .js {} to switch back)\n",
         Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
@@ -795,7 +824,7 @@ fn cmd_c(repl: &mut Repl, args: &[u8]) -> ReplResult {
         repl.eval_inline(ReplMode::C, code);
         return ReplResult::SkipEval;
     }
-    repl.mode = ReplMode::C;
+    repl.switch_mode(ReplMode::C);
     repl.print(format_args!(
         "{}Switched to C mode{} (embedded TinyCC; expressions echo values, declarations persist at file scope, statements run once; type {} .js {} to switch back)\n",
         Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
@@ -1436,6 +1465,11 @@ impl<'a> Repl<'a> {
     }
 
     fn write_highlighted(&self, text: &[u8]) {
+        if self.mode != ReplMode::Js {
+            // Non-JS modes use a lightweight per-language keyword highlighter.
+            self.write_highlighted_other(text);
+            return;
+        }
         let writer = Output::writer();
         let highlighter = fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
             text,
@@ -1448,6 +1482,101 @@ impl<'a> Repl<'a> {
         if writer.write_fmt(format_args!("{}", highlighter)).is_err() {
             let _ = writer.write_all(text);
         }
+    }
+
+    /// Lightweight syntax highlighting for Python / Shell / SQL / C input:
+    /// keywords in cyan, string literals in green, comments in dim, numbers
+    /// in yellow. This is intentionally a simple tokenizer — the full
+    /// rust-analyzer-style highlighter for each language is future work.
+    fn write_highlighted_other(&self, text: &[u8]) {
+        let words = keywords_for_mode(self.mode);
+        let mut out: Vec<u8> = Vec::with_capacity(text.len() + 32);
+        let mut i = 0;
+        let bytes = text;
+        while i < bytes.len() {
+            let ch = bytes[i];
+            // String literals ('...' "...")
+            if ch == b'"' || ch == b'\'' || (self.mode == ReplMode::Shell && ch == b'`') {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != ch {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if i < bytes.len() {
+                    i += 1; // closing quote
+                }
+                out.extend_from_slice(Color::GREEN.as_bytes());
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(Color::RESET.as_bytes());
+                continue;
+            }
+            // C-style block comments (C mode).
+            if self.mode == ReplMode::C
+                && ch == b'/'
+                && i + 1 < bytes.len()
+                && bytes[i + 1] == b'*'
+            {
+                let start = i;
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+                out.extend_from_slice(b"\x1b[2m");
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(Color::RESET.as_bytes());
+                continue;
+            }
+            // Line comments.
+            if ch == b'#'
+                || (self.mode == ReplMode::C && ch == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/')
+            {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                out.extend_from_slice(b"\x1b[2m");
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(Color::RESET.as_bytes());
+                continue;
+            }
+            // Identifiers / keywords.
+            if ch.is_ascii_alphabetic() || ch == b'_' {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                let word = &bytes[start..i];
+                if words.binary_search(&word).is_ok() {
+                    out.extend_from_slice(Color::CYAN.as_bytes());
+                    out.extend_from_slice(word);
+                    out.extend_from_slice(Color::RESET.as_bytes());
+                } else {
+                    out.extend_from_slice(word);
+                }
+                continue;
+            }
+            // Numbers.
+            if ch.is_ascii_digit() {
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.' || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                out.extend_from_slice(Color::YELLOW.as_bytes());
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(Color::RESET.as_bytes());
+                continue;
+            }
+            out.push(ch);
+            i += 1;
+        }
+        let _ = Output::writer().write_all(&out);
     }
 
     // ========================================================================
@@ -2006,6 +2135,20 @@ impl<'a> Repl<'a> {
         self.mode = target;
         self.eval_in_current_mode(code);
         self.mode = prev;
+    }
+
+    /// Switch the active language mode, swapping in that language's history
+    /// file and resetting any in-progress multiline/editor input.
+    fn switch_mode(&mut self, new_mode: ReplMode) {
+        if self.mode == new_mode {
+            return;
+        }
+        let _ = self.history.switch_mode(new_mode);
+        self.mode = new_mode;
+        self.input_mode = InputMode::Normal;
+        self.multiline_buffer.clear();
+        self.editor_buffer.clear();
+        self.history.reset_position();
     }
 
     /// Evaluate one input in Shell / SQL / C mode by synthesizing a JS
@@ -2844,14 +2987,26 @@ impl<'a> Repl<'a> {
                 self.refresh_line();
                 return Ok(());
             }
-            // Shell / SQL / C: single-line evaluation through the
-            // synthesized-JS path. Multiline input is available via `.editor`.
+            // Shell / SQL / C: evaluation through the synthesized-JS path
+            // (`.editor` also works). Multiline input is collected when the
+            // input is syntactically incomplete (open quotes, backslash
+            // continuation, unbalanced braces/brackets, SQL missing `;`).
             ReplMode::Shell | ReplMode::Sql | ReplMode::C => {
                 let full_code: Box<[u8]> = if self.input_mode == InputMode::Multiline {
                     Box::<[u8]>::from(self.multiline_buffer.as_slice())
                 } else {
                     Box::<[u8]>::from(line.as_slice())
                 };
+                if is_incomplete_cheap_language(self.mode, &full_code) {
+                    if self.input_mode != InputMode::Multiline {
+                        self.input_mode = InputMode::Multiline;
+                        self.multiline_buffer.extend_from_slice(&line);
+                        self.multiline_buffer.push(b'\n');
+                    }
+                    self.line_editor.clear();
+                    self.refresh_line();
+                    return Ok(());
+                }
                 self.history.add(strings::trim(&full_code, b"\n"))?;
                 self.eval_cheap_language(&full_code);
                 self.line_editor.clear();
@@ -2936,6 +3091,47 @@ impl<'a> Repl<'a> {
         self.refresh_line();
     }
 
+    /// Render a set of string completions (non-JS modes): insert the unique
+    /// match, list multiple matches, or show a count.
+    fn render_completions(&mut self, completions: &[Vec<u8>], word_start: usize) {
+        match completions.len() {
+            0 => {
+                let _ = self.line_editor.insert(b' ');
+                let _ = self.line_editor.insert(b' ');
+                self.refresh_line();
+            }
+            1 => {
+                let completion = &completions[0];
+                while self.line_editor.cursor > word_start {
+                    self.line_editor.backspace();
+                }
+                let _ = self.line_editor.insert_slice(completion);
+                self.refresh_line();
+            }
+            n if n <= 50 => {
+                self.print(format_args!("\n"));
+                for m in completions {
+                    self.print(format_args!(
+                        "  {}{}{}\n",
+                        Color::CYAN,
+                        BStr::new(m),
+                        Color::RESET
+                    ));
+                }
+                self.refresh_line();
+            }
+            n => {
+                self.print(format_args!(
+                    "\n{}{} completions{}\n",
+                    Color::DIM,
+                    n,
+                    Color::RESET
+                ));
+                self.refresh_line();
+            }
+        }
+    }
+
     fn handle_tab(&mut self) {
         // Note: reshaped for borrowck — copy line out
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
@@ -2969,7 +3165,8 @@ impl<'a> Repl<'a> {
             return;
         }
 
-        // Property completion using JSC
+        // Property completion using JSC (JS mode) or per-language completion
+        // for the other modes.
         let Some(global) = self.global else {
             // No VM, just insert spaces
             let _ = self.line_editor.insert(b' ');
@@ -2989,6 +3186,23 @@ impl<'a> Repl<'a> {
         }
 
         let prefix = &line[word_start..];
+
+        // Non-JS modes: complete from per-language word lists / the Python
+        // REPL scope. This also handles the "property" case where the word
+        // follows `.` — the prefix scan above stops at `.`, so `obj.foo` has
+        // prefix `foo`; we complete from the same static lists (attribute
+        // completion is a later refinement).
+        if self.mode != ReplMode::Js {
+            let completions = match self.mode {
+                ReplMode::Python => python_completions(prefix),
+                ReplMode::Shell => shell_completions(prefix),
+                ReplMode::Sql => sql_completions(prefix),
+                ReplMode::C => c_completions(prefix),
+                ReplMode::Js => unreachable!(),
+            };
+            self.render_completions(&completions, word_start);
+            return;
+        }
 
         // Get completions from global object
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
@@ -3172,6 +3386,228 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
 }
 
+/// Whether a Shell / SQL / C input needs more lines before it can run.
+///
+/// - Shell: unclosed quotes, trailing backslash continuation, or an
+///   unbalanced brace/paren (pipeline with `|`, `{ ... }`, `if ...; then`).
+/// - SQL: unclosed string literal, or a statement that does not end with `;`
+///   (SQLite tolerates missing `;` but multi-line statements are collected
+///   until one is seen).
+/// - C: unclosed quote/comment or unbalanced braces/brackets/parens.
+fn is_incomplete_cheap_language(mode: ReplMode, code: &[u8]) -> bool {
+    let trimmed = strings::trim(code, b" \t\n\r");
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let mut brace_count: i32 = 0;
+    let mut bracket_count: i32 = 0;
+    let mut paren_count: i32 = 0;
+    let mut in_string: u8 = 0;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut ends_with_backslash = false;
+
+    let bytes = code;
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        ends_with_backslash = false;
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if ch == b'\\' {
+            escaped = true;
+            // A backslash at the very end continues the line (shell/C).
+            if i + 1 == bytes.len() {
+                ends_with_backslash = true;
+            }
+            i += 1;
+            continue;
+        }
+        if in_comment {
+            if ch == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                in_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string != 0 {
+            if ch == in_string {
+                in_string = 0;
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            b'"' | b'\'' | b'`' => in_string = ch,
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' && mode == ReplMode::C => {
+                in_comment = true;
+                i += 2;
+                continue;
+            }
+            b'{' => brace_count += 1,
+            b'}' => brace_count -= 1,
+            b'[' => bracket_count += 1,
+            b']' => bracket_count -= 1,
+            b'(' => paren_count += 1,
+            b')' => paren_count -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if in_string != 0 || in_comment || ends_with_backslash {
+        return true;
+    }
+    if brace_count > 0 || bracket_count > 0 || paren_count > 0 {
+        return true;
+    }
+    // SQL: collect until the statement ends with `;` (or is a directive like
+    // `.tables` — those run single-line).
+    if mode == ReplMode::Sql {
+        let last = trimmed[trimmed.len() - 1];
+        return last != b';' && last != b'.';
+    }
+    false
+}
+
 use crate::api::js_transpiler::is_likely_object_literal;
+
+// ---------------------------------------------------------------------------
+// Per-language Tab completion (non-JS modes)
+// ---------------------------------------------------------------------------
+
+/// Filter `words` to those starting with `prefix`, sorted, as byte vectors.
+fn filter_completions<'a>(words: &'a [&'static str], prefix: &[u8]) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = words
+        .iter()
+        .filter(|w| w.as_bytes().starts_with(prefix))
+        .map(|w| w.as_bytes().to_vec())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Sorted keyword list for the lightweight per-language highlighter.
+/// `binary_search` requires ascending order.
+fn keywords_for_mode(mode: ReplMode) -> &'static [&'static [u8]] {
+    match mode {
+        ReplMode::Python => &[
+            b"False", b"None", b"True", b"and", b"as", b"assert", b"async", b"await", b"break",
+            b"class", b"continue", b"def", b"del", b"elif", b"else", b"except", b"finally",
+            b"for", b"from", b"global", b"if", b"import", b"in", b"is", b"lambda", b"nonlocal",
+            b"not", b"or", b"pass", b"raise", b"return", b"try", b"while", b"with", b"yield",
+        ],
+        ReplMode::Shell => &[
+            b"alias", b"bg", b"break", b"builtin", b"case", b"cd", b"command", b"continue",
+            b"do", b"done", b"echo", b"elif", b"else", b"esac", b"eval", b"exec", b"exit",
+            b"export", b"fg", b"fi", b"for", b"function", b"getopts", b"hash", b"help",
+            b"history", b"if", b"jobs", b"kill", b"let", b"local", b"read", b"readonly",
+            b"return", b"select", b"set", b"shift", b"source", b"test", b"then", b"time",
+            b"times", b"trap", b"type", b"ulimit", b"umask", b"unalias", b"unset", b"until",
+            b"wait", b"while",
+        ],
+        ReplMode::Sql => &[
+            b"ABORT", b"ACTION", b"ADD", b"AFTER", b"ALL", b"ALTER", b"ANALYZE", b"AND",
+            b"AS", b"ASC", b"ATTACH", b"AUTOINCREMENT", b"BEFORE", b"BEGIN", b"BETWEEN",
+            b"BY", b"CASCADE", b"CASE", b"CAST", b"CHECK", b"COLLATE", b"COLUMN", b"COMMIT",
+            b"CONFLICT", b"CONSTRAINT", b"CREATE", b"CROSS", b"CURRENT", b"DATABASE",
+            b"DEFAULT", b"DEFERRABLE", b"DEFERRED", b"DELETE", b"DESC", b"DETACH",
+            b"DISTINCT", b"DROP", b"EACH", b"ELSE", b"END", b"ESCAPE", b"EXCEPT",
+            b"EXCLUSIVE", b"EXISTS", b"EXPLAIN", b"FAIL", b"FOR", b"FOREIGN", b"FROM",
+            b"FULL", b"GLOB", b"GROUP", b"HAVING", b"IF", b"IGNORE", b"IMMEDIATE", b"IN",
+            b"INDEX", b"INDEXED", b"INITIALLY", b"INNER", b"INSERT", b"INSTEAD",
+            b"INTERSECT", b"INTO", b"IS", b"ISNULL", b"JOIN", b"KEY", b"LEFT", b"LIKE",
+            b"LIMIT", b"MATCH", b"NATURAL", b"NO", b"NOT", b"NOTNULL", b"NULL", b"OF",
+            b"OFFSET", b"ON", b"OR", b"ORDER", b"OUTER", b"PARTITION", b"PLAN", b"PRAGMA",
+            b"PRIMARY", b"QUERY", b"RAISE", b"RECURSIVE", b"REFERENCES", b"REGEXP",
+            b"REINDEX", b"RELEASE", b"RENAME", b"REPLACE", b"RESTRICT", b"RIGHT",
+            b"ROLLBACK", b"ROW", b"SAVEPOINT", b"SELECT", b"SET", b"TABLE", b"TEMP",
+            b"TEMPORARY", b"THEN", b"TO", b"TRANSACTION", b"TRIGGER", b"UNION", b"UNIQUE",
+            b"UPDATE", b"USING", b"VACUUM", b"VALUES", b"VIEW", b"VIRTUAL", b"WHEN",
+            b"WHERE", b"WITH", b"WITHOUT",
+        ],
+        ReplMode::C => &[
+            b"auto", b"break", b"case", b"char", b"const", b"continue", b"default", b"do",
+            b"double", b"else", b"enum", b"extern", b"float", b"for", b"goto", b"if",
+            b"inline", b"int", b"long", b"register", b"restrict", b"return", b"short",
+            b"signed", b"sizeof", b"static", b"struct", b"switch", b"typedef", b"union",
+            b"unsigned", b"void", b"volatile", b"while",
+        ],
+        ReplMode::Js => &[],
+    }
+}
+
+/// Python: names in the persistent REPL scope (via the embedded RustPython
+/// runtime), falling back to an empty list when the runtime is unavailable.
+fn python_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
+    let prefix_str = String::from_utf8_lossy(prefix);
+    match poly_python::repl_completions(&prefix_str) {
+        Ok(json) => serde_json::from_str::<Vec<String>>(&json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.into_bytes())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Shell: common commands + builtins (a curated list; PATH lookup would
+/// need an fs walk per keystroke).
+fn shell_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
+    const WORDS: &[&str] = &[
+        "alias", "bg", "break", "builtin", "case", "cd", "command", "continue", "cp", "curl",
+        "do", "done", "echo", "elif", "else", "env", "esac", "eval", "exec", "exit", "export",
+        "fg", "fi", "for", "function", "getopts", "grep", "hash", "help", "history", "if",
+        "jobs", "kill", "let", "local", "ls", "man", "mkdir", "mv", "pwd", "read", "readonly",
+        "return", "rm", "sed", "select", "set", "shift", "source", "sudo", "tar", "test",
+        "then", "time", "times", "trap", "type", "ulimit", "umask", "unalias", "unset",
+        "until", "wait", "wc", "while", "wget", "which",
+    ];
+    filter_completions(WORDS, prefix)
+}
+
+/// SQL: SQLite-flavored keywords + common functions.
+fn sql_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
+    const WORDS: &[&str] = &[
+        "ABORT", "ACTION", "ADD", "AFTER", "ALL", "ALTER", "ANALYZE", "AND", "AS", "ASC",
+        "ATTACH", "AUTOINCREMENT", "BEFORE", "BEGIN", "BETWEEN", "BY", "CASCADE", "CASE",
+        "CAST", "CHECK", "COLLATE", "COLUMN", "COMMIT", "CONFLICT", "CONSTRAINT", "CREATE",
+        "CROSS", "CURRENT", "DATABASE", "DEFAULT", "DEFERRABLE", "DEFERRED", "DELETE", "DESC",
+        "DETACH", "DISTINCT", "DROP", "EACH", "ELSE", "END", "ESCAPE", "EXCEPT", "EXCLUSIVE",
+        "EXISTS", "EXPLAIN", "FAIL", "FOR", "FOREIGN", "FROM", "FULL", "GLOB", "GROUP",
+        "HAVING", "IF", "IGNORE", "IMMEDIATE", "IN", "INDEX", "INDEXED", "INITIALLY", "INNER",
+        "INSERT", "INSTEAD", "INTERSECT", "INTO", "IS", "ISNULL", "JOIN", "KEY", "LEFT",
+        "LIKE", "LIMIT", "MATCH", "NATURAL", "NO", "NOT", "NOTNULL", "NULL", "OF", "OFFSET",
+        "ON", "OR", "ORDER", "OUTER", "PARTITION", "PLAN", "PRAGMA", "PRIMARY", "QUERY",
+        "RAISE", "RECURSIVE", "REFERENCES", "REGEXP", "REINDEX", "RELEASE", "RENAME",
+        "REPLACE", "RESTRICT", "RIGHT", "ROLLBACK", "ROW", "SAVEPOINT", "SELECT", "SET",
+        "TABLE", "TEMP", "TEMPORARY", "THEN", "TO", "TRANSACTION", "TRIGGER", "UNION",
+        "UNIQUE", "UPDATE", "USING", "VACUUM", "VALUES", "VIEW", "VIRTUAL", "WHEN", "WHERE",
+        "WITH", "WITHOUT", "avg", "count", "group_concat", "max", "min", "sum", "total",
+    ];
+    filter_completions(WORDS, prefix)
+}
+
+/// C: keywords + common stdlib function names.
+fn c_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
+    const WORDS: &[&str] = &[
+        "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
+        "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
+        "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
+        "switch", "typedef", "union", "unsigned", "void", "volatile", "while", "_Bool",
+        "_Complex", "_Imaginary", "printf", "scanf", "fprintf", "fscanf", "sprintf", "strlen",
+        "strcmp", "strcpy", "strcat", "memcpy", "memset", "malloc", "calloc", "realloc",
+        "free", "abs", "fabs", "sqrt", "pow", "floor", "ceil", "rand", "srand", "exit",
+        "atoi", "atof", "getchar", "putchar", "puts", "fopen", "fclose", "fgets", "fputs",
+        "NULL", "stdin", "stdout", "stderr",
+    ];
+    filter_completions(WORDS, prefix)
+}
 
 const VERSION: &str = Environment::VERSION_STRING;
