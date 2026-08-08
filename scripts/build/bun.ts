@@ -7,7 +7,7 @@
  *   - emit cargo build → libbun_rust.a
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
- *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
+ *   - link everything → poly-debug (or poly-profile, poly-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
  *
  * ## Build modes
@@ -139,9 +139,9 @@ function systemLibs(cfg: Config): string[] {
  *   link-only: exe, strippedExe?, dsym?
  */
 export interface BunOutput {
-  /** Linked executable (bun-debug, bun-profile). Full/link-only. */
+  /** Linked executable (poly-debug, poly-profile). Full/link-only. */
   exe?: string;
-  /** Stripped `bun`. Plain release full/link-only. */
+  /** Stripped `poly`. Plain release full/link-only. */
   strippedExe?: string | undefined;
   /** .dSYM bundle (darwin plain release). Added to default targets so ninja builds it. */
   dsym?: string | undefined;
@@ -476,8 +476,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
-    n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
-    n.default(["bun"]);
+    n.phony("poly", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
+    n.default(["poly"]);
     return { archive, deps, codegen, rustObjects, objects: allObjects };
   }
 
@@ -558,8 +558,8 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     vendorStamps: lolhtmlDep.outputs,
   });
 
-  n.phony("bun", rustObjects);
-  n.default(["bun"]);
+  n.phony("poly", rustObjects);
+  n.default(["poly"]);
 
   return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
 }
@@ -571,7 +571,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * if download failed or paths drift).
  *
  * Expected artifacts (same paths cpp-only/rust-only produced):
- *   - libbun-profile.a            — from cpp-only's ar()
+ *   - libpoly-profile.a            — from cpp-only's ar()
  *   - libbun_rust.a / bun_rust.lib — from rust-only's cargo (rustLibPath)
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
@@ -594,7 +594,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   }
 
   // Archive from cpp-only: same name cpp-only emits (exe name + lib
-  // prefix/suffix, e.g. libbun-profile.a).
+  // prefix/suffix, e.g. libpoly-profile.a).
   const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
 
   // libbun_rust.a from rust-only: same path emitRust writes to. Shared
@@ -645,7 +645,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
  * locally. Graph = emitRustOnly's cargo edge + emitLinkOnly's link edge.
  *
  * Expected downloaded artifacts (same paths cpp-only produced):
- *   - libbun-profile.a            — from cpp-only's ar()
+ *   - libpoly-profile.a            — from cpp-only's ar()
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
  */
@@ -715,12 +715,12 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
 /**
  * Post-link steps shared by every linking mode (full, link-only,
- * rust-and-link): strip, dsymutil, the `bun` phony, and the `--revision`
+ * rust-and-link): strip, dsymutil, the `poly` phony, and the `--revision`
  * smoke test.
  *
  * Centralized because the smoke_test and dsymutil edges must be ordered
  * after strip — their rule commands wrap through `cfg.jsRuntime`
- * (process.execPath), which can BE the strip output when `bun` on PATH
+ * (process.execPath), which can BE the strip output when `poly` on PATH
  * resolves into the build directory (build/release/bun). Without the
  * ordering, ninja runs strip and the wrapper exec concurrently (both
  * depend only on `exe`) and the wrapper fails with "Permission denied" on
@@ -734,7 +734,7 @@ export function emitPostLink(
   exeName: string,
   stripflags: string[],
 ): { strippedExe: string | undefined; dsym: string | undefined } {
-  // Plain release only: produce stripped `bun` alongside `bun-profile`.
+  // Plain release only: produce stripped `poly` alongside `poly-profile`.
   // Debug/asan/valgrind/assertions keep symbols (you want them for
   // debugging).
   let strippedExe: string | undefined;
@@ -742,16 +742,16 @@ export function emitPostLink(
   if (shouldStrip(cfg)) {
     strippedExe = emitStrip(n, cfg, exe, stripflags);
     // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
-    // bundle. dsymutil reads DWARF from bun-profile, writes
-    // bun-profile.dSYM. The input exe is never stripped in-place (strip
+    // bundle. dsymutil reads DWARF from poly-profile, writes
+    // poly-profile.dSYM. The input exe is never stripped in-place (strip
     // writes a new file via -o), so the read is safe.
     if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName, strippedExe);
   }
 
-  // `bun` phony — only when strip didn't produce a literal file named
-  // `bun` (which would collide with the phony). When strip runs, `ninja
-  // bun` builds the stripped file; no phony needed.
-  if (strippedExe === undefined) n.phony("bun", [exe]);
+  // `poly` phony — only when strip didn't produce a literal file named
+  // `poly` (which would collide with the phony). When strip runs, `ninja
+  // poly` builds the stripped file; no phony needed.
+  if (strippedExe === undefined) n.phony("poly", [exe]);
 
   // Run `<exe> --revision`. If it exits non-zero or crashes, something
   // broke at load time (missing symbol, static initializer blowup, ABI
@@ -830,14 +830,14 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
 }
 
 /**
- * Strip the linked executable → plain `bun`. Returns absolute path to
+ * Strip the linked executable → plain `poly`. Returns absolute path to
  * the stripped output.
  *
- * Input (bun-profile) is NOT modified — strip writes a new file via `-o`.
+ * Input (poly-profile) is NOT modified — strip writes a new file via `-o`.
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
 function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
-  const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
+  const out = resolve(cfg.buildDir, "poly" + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command
@@ -851,7 +851,7 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   } else {
     // Darwin cross: llvm-strip regenerates a bare linker-style ad-hoc
     // signature on its output, dropping the entitlements the link step
-    // embedded — so the stripped `bun` needs its own postlink pass.
+    // embedded — so the stripped `poly` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
       command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}`,
@@ -876,8 +876,8 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
  * Extract debug symbols from the linked (unstripped) executable into a
  * .dSYM bundle. darwin-only.
  *
- * Runs dsymutil on bun-profile (which has full DWARF). The .dSYM lets you
- * symbolicate crash logs from the stripped `bun` — lldb/Instruments find
+ * Runs dsymutil on poly-profile (which has full DWARF). The .dSYM lets you
+ * symbolicate crash logs from the stripped `poly` — lldb/Instruments find
  * it automatically by UUID.
  *
  * `strippedExe` is order-only for the same reason as emitSmokeTest: the
@@ -955,7 +955,7 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
   // substituted content hasn't changed.
   const rcTemplate = resolve(cfg.cwd, "src/windows-app-info.rc");
   const ico = resolve(cfg.cwd, "src/bun.ico");
-  const manifest = resolve(cfg.cwd, "src/bun.exe.manifest");
+  const manifest = resolve(cfg.cwd, "src/poly.exe.manifest");
   const rcIn = readFileSync(rcTemplate, "utf8");
   const [major = "0", minor = "0", patch = "0"] = cfg.version.split(".");
   const versionWithTag = cfg.canary ? `${cfg.version}-canary.${cfg.canaryRevision}` : cfg.version;

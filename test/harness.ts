@@ -46,8 +46,8 @@ export const isVerbose = process.env.DEBUG === "1";
 export const isFlaky = isCI;
 export const isBroken = isCI;
 // Detect ASAN from the runtime, not the binary name. CI's release ASAN lane
-// produces `bun-asan`, but a plain `bun bd` debug build is *also* ASAN-
-// instrumented while named `bun-debug` — so the name check alone is wrong for
+// produces `poly-asan`, but a plain `bun bd` debug build is *also* ASAN-
+// instrumented while named `poly-debug` — so the name check alone is wrong for
 // local runs. `isASANEnabled` is a side-effect-free `#if ASAN_ENABLED` probe,
 // so it's correct for both. Fall back to the name check if the internal
 // binding is ever unavailable (e.g. an older comparison binary).

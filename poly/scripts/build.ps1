@@ -90,13 +90,13 @@ try {
 
 $binaryCandidates = if ($Configuration -eq "Release") {
     @(
-        (Join-Path $projectRoot "build\release\bun.exe"),
-        (Join-Path $projectRoot "build\release\bun")
+        (Join-Path $projectRoot "build\release\poly.exe"),
+        (Join-Path $projectRoot "build\release\poly")
     )
 } else {
     @(
-        (Join-Path $projectRoot "build\debug\bun-debug.exe"),
-        (Join-Path $projectRoot "build\debug\bun-debug")
+        (Join-Path $projectRoot "build\debug\poly-debug.exe"),
+        (Join-Path $projectRoot "build\debug\poly-debug")
     )
 }
 $binary = $binaryCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1

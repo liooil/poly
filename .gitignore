@@ -103,8 +103,8 @@ outdir
 outdir/
 packages/*/*.wasm
 packages/bun-*/*.o
-packages/bun-*/bun
-packages/bun-*/bun-profile
+packages/bun-*/poly
+packages/bun-*/poly-profile
 packages/bun-*/debug-bun
 packages/bun-cli/bin/*
 packages/bun-cli/postinstall.js

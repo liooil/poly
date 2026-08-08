@@ -1480,26 +1480,26 @@ function computeBuildDirName(c: { debug: boolean; release: boolean; asan: boolea
 /**
  * Name of the output executable (no suffix).
  *
- * Debug builds: bun-debug. Release with ASAN: bun-asan. Etc.
- * The plain `bun` name (without -profile) only exists post-strip.
+ * Debug builds: poly-debug. Release with ASAN: poly-asan. Etc.
+ * The plain `poly` name (without -profile) only exists post-strip.
  *
  * Lives here (not bun.ts) so flags.ts can use it for linker-map filename
  * without a circular import.
  */
 export function bunExeName(cfg: Config): string {
-  if (cfg.debug) return "bun-debug";
+  if (cfg.debug) return "poly-debug";
   // Release variants — suffix encodes which features differ from plain release.
   // First match wins.
-  if (cfg.asan && cfg.valgrind) return "bun-asan-valgrind";
-  if (cfg.asan) return "bun-asan";
-  if (cfg.valgrind) return "bun-valgrind";
-  if (cfg.assertions) return "bun-assertions";
-  // Plain release: called bun-profile (the stripped one is `bun`).
-  return "bun-profile";
+  if (cfg.asan && cfg.valgrind) return "poly-asan-valgrind";
+  if (cfg.asan) return "poly-asan";
+  if (cfg.valgrind) return "poly-valgrind";
+  if (cfg.assertions) return "poly-assertions";
+  // Plain release: called poly-profile (the stripped one is `poly`).
+  return "poly-profile";
 }
 
 /**
- * Whether this config produces a stripped `bun` alongside `bun-profile`.
+ * Whether this config produces a stripped `poly` alongside `poly-profile`.
  *
  * Only plain release builds strip — not debug (you want symbols), not
  * asan/valgrind (strip interferes), not assertions (usually debugging).
@@ -1512,7 +1512,7 @@ const c = { dim, cyan, green };
 
 /**
  * Format a config for display (used at configure time).
- * `exe` is the output binary name (e.g. "bun-debug" or "bun-profile → bun (stripped)").
+ * `exe` is the output binary name (e.g. "poly-debug" or "poly-profile → poly (stripped)").
  */
 export function formatConfig(cfg: Config, exe: string): string {
   const label = (s: string) => c.dim(s.padEnd(12));

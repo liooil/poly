@@ -1259,8 +1259,8 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
   },
   {
-    // Always icf=safe in release. The stripped `bun` shares its build-id
-    // with `bun-profile`, so disabling ICF on the profile binary "for perf
+    // Always icf=safe in release. The stripped `poly` shares its build-id
+    // with `poly-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
     flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
@@ -1370,7 +1370,7 @@ export const linkerFlags: Flag[] = [
     // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
     // that case the link-time flag is dropped and llvm-objcopy compresses
     // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
-    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // uncompressed poly-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
     when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
@@ -1452,7 +1452,7 @@ export function linkDepends(cfg: Config): string[] {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Strip step only runs for plain release builds (bun-profile → bun).
+ * Strip step only runs for plain release builds (poly-profile → poly).
  * Not for debug/asan/valgrind/assertions variants — those keep symbols.
  *
  * Always: --strip-all --strip-debug --discard-all.

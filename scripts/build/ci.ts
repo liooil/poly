@@ -339,12 +339,12 @@ function upload(paths: string[], cwd: string): void {
 //
 //   ${bunTriplet}-profile.zip   (plain release)
 //     └── ${bunTriplet}-profile/
-//           ├── bun-profile[.exe]
+//           ├── poly-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
-//           ├── bun-profile.linker-map   (linux/mac non-asan)
-//           ├── bun-profile.pdb          (windows)
-//           └── bun-profile.dSYM         (mac)
+//           ├── poly-profile.linker-map   (linux/mac non-asan)
+//           ├── poly-profile.pdb          (windows)
+//           └── poly-profile.dSYM         (mac)
 //
 //   ${bunTriplet}.zip           (stripped, plain release only)
 //     └── ${bunTriplet}/
@@ -378,7 +378,7 @@ export function computeBunTriplet(cfg: Config): string {
 
 /**
  * Post-link packaging and upload for link-only / rust-and-link mode. Runs
- * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
+ * AFTER ninja succeeds — at that point poly-profile (and stripped poly) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
@@ -392,7 +392,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   }
 
   const buildDir = cfg.buildDir;
-  const exeName = bunExeName(cfg); // bun-profile, bun-asan, etc.
+  const exeName = bunExeName(cfg); // poly-profile, bun-asan, etc.
   const bunTriplet = computeBunTriplet(cfg);
 
   // ─── features.json ───
@@ -419,7 +419,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
 
   // ─── Profile/variant zip ───
   // cmake's bunPath: string(REPLACE bun ${bunTriplet} bunPath ${bun})
-  // where ${bun} is the target name (bun-profile, bun-asan, ...).
+  // where ${bun} is the target name (poly-profile, bun-asan, ...).
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
@@ -458,7 +458,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   }
 
   // ─── Stripped zip ───
-  // Only for plain release (shouldStrip). Just the stripped `bun` binary.
+  // Only for plain release (shouldStrip). Just the stripped `poly` binary.
   // cmake: bunStripPath = string(REPLACE bun ${bunTriplet} bunStripPath bun) = bunTriplet.
   if (shouldStrip(cfg) && output.strippedExe !== undefined) {
     zipPaths.push(makeZip(cfg, bunTriplet, [basename(output.strippedExe)]));
@@ -907,7 +907,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
  */
 export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
   const start = Date.now();
-  const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
+  const exeName = bunExeName(cfg); // poly-profile, or bun-assertions on an assertions build
   const why = !cfg.canary
     ? "release build"
     : shouldGenerateOrderFile(cfg, ctx)

@@ -103,7 +103,7 @@ export interface ConfigureResult {
   elapsed: number;
   /** True if build.ninja actually changed (vs an idempotent re-run). */
   changed: boolean;
-  /** Final executable name (e.g. "bun-debug"). For status messages. */
+  /** Final executable name (e.g. "poly-debug"). For status messages. */
   exe: string;
 }
 
@@ -320,14 +320,14 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   mark("emitBun");
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.
-  // Release builds produce both bun-profile and stripped bun; `bun` is the
-  // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
+  // no smoke test). Full/link-only: `poly` phony (or stripped file) + `check`.
+  // Release builds produce both poly-profile and stripped poly; `poly` is the
+  // stripped one. Debug produces poly-debug; `poly` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
   // it (no other node depends on it, and unlike cmake's POST_BUILD it doesn't
   // auto-trigger).
   if (output.exe !== undefined) {
-    const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
+    const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "poly";
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     n.default(targets);
