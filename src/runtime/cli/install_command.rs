@@ -167,7 +167,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
         manager.subcommand = Subcommand::Add;
         if manager.options.should_print_command_name() {
             bun_core::prettyln!(
-                "<r><b>bun add <r><d>v{}<r>\n",
+                "<r><b>poly add <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,
             );
             Output::flush();
@@ -178,7 +178,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(
-            "<r><b>bun install <r><d>v{}<r>\n",
+            "<r><b>poly install <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();

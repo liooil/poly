@@ -35,8 +35,8 @@ end
 set -l poly_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l poly_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l poly_builtin_cmds_without_run dev create help poly upgrade discord install remove add update init pm x repl
-set -l poly_builtin_cmds_accepting_flags create help poly upgrade discord run init link unlink pm x update
+set -l poly_builtin_cmds_without_run add audit build ci completions create exec feedback help info init install link outdated patch patch-commit pm poly publish remove repl test unlink update upgrade why x a c i rm
+set -l poly_builtin_cmds_accepting_flags create help poly upgrade run init link unlink pm x update
 
 function __poly_complete_bins_scripts --inherit-variable poly_builtin_cmds_without_run -d "Emit poly completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -93,12 +93,6 @@ complete -c poly \
 complete -c poly \
 	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
 
-# Complete dev and create as first subcommand.
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'dev' -d 'Start dev server'
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
-
 # Complete "next" and "react" if we've seen "create".
 complete -c poly \
 	-n "__fish_seen_subcommand_from create" -a 'next' -d 'new Next.js project'
@@ -106,9 +100,6 @@ complete -c poly \
 complete -c poly \
 	-n "__fish_seen_subcommand_from create" -a 'react' -d 'new React project'
 
-# Complete "upgrade" as first subcommand.
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'upgrade' -d 'Upgrade poly to the latest version' -x
 # Complete "-h/--help" unconditionally.
 complete -c poly \
 	-s "h" -l "help" -d 'See all commands and flags' -x
@@ -117,15 +108,6 @@ complete -c poly \
 complete -c poly \
 	-n "not __fish_use_subcommand" -l "version" -s "v" -d 'Bun\'s version' -x
 
-# Complete additional subcommands.
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'discord' -d 'Open poly\'s Discord server' -x
-
-
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'
-
-
 complete -c poly \
 	-n "__fish_seen_subcommand_from poly" -F -d 'Bundle this'
 
@@ -133,29 +115,16 @@ complete -c poly \
 	-n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from react next" -F -d "Create in directory"
 
 
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
-
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
-
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
-
-complete -c poly \
-	-n "__fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
-
-
 for i in (seq (count $poly_install_boolean_flags))
 	complete -c poly \
-		-n "__fish_seen_subcommand_from install add remove update" -l "$poly_install_boolean_flags[$i]" -d "$poly_install_boolean_flags_descriptions[$i]"
+		-n "__fish_seen_subcommand_from install add remove update; and not __fish_seen_subcommand_from completions" -l "$poly_install_boolean_flags[$i]" -d "$poly_install_boolean_flags_descriptions[$i]"
 end
 
 complete -c poly \
-	-n "__fish_seen_subcommand_from install add remove update" -l 'cwd' -d 'Change working directory'
+	-n "__fish_seen_subcommand_from install add remove update; and not __fish_seen_subcommand_from completions" -l 'cwd' -d 'Change working directory'
 
 complete -c poly \
-	-n "__fish_seen_subcommand_from install add remove update" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
+	-n "__fish_seen_subcommand_from install add remove update; and not __fish_seen_subcommand_from completions" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 
 complete -c poly \
 	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_poly_packages)'
@@ -170,22 +139,42 @@ complete -c poly \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_poly_bins) (__fish__get_poly_scripts);" -a 'rm' -f
 
 # Add built-in subcommands with descriptions.
-complete -c poly -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
-complete -c poly -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"
-complete -c poly -n "__fish_use_subcommand" -a "upgrade" -d "Upgrade Bun"
-complete -c poly -n "__fish_use_subcommand" -a "run" -d "Run a script or package binary"
-complete -c poly -n "__fish_use_subcommand" -a "install" -d "Install dependencies from package.json" -f
-complete -c poly -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency from package.json" -f
 complete -c poly -n "__fish_use_subcommand" -a "add" -d "Add a dependency to package.json" -f
-complete -c poly -n "__fish_use_subcommand" -a "init" -d "Initialize a Bun project in this directory" -f
+complete -c poly -n "__fish_use_subcommand" -a "audit" -d "Check installed packages for security vulnerabilities" -f
+complete -c poly -n "__fish_use_subcommand" -a "build poly" --require-parameter -F -d "Bundle TypeScript and JavaScript"
+complete -c poly -n "__fish_use_subcommand" -a "ci" -d "Install dependencies from a frozen lockfile" -f
+complete -c poly -n "__fish_use_subcommand" -a "completions" -d "Generate or install shell completions" -f
+complete -c poly -n "__fish_use_subcommand" -a "create" -d "Create a new project from a template" -f
+complete -c poly -n "__fish_use_subcommand" -a "exec" -d "Execute a shell command" -f
+complete -c poly -n "__fish_use_subcommand" -a "feedback" -d "Open the Poly feedback form" -f
+complete -c poly -n "__fish_use_subcommand" -a "help" -d "Show help for a command" -f
+complete -c poly -n "__fish_use_subcommand" -a "info" -d "Display package metadata" -f
+complete -c poly -n "__fish_use_subcommand" -a "init" -d "Initialize a Poly project" -f
+complete -c poly -n "__fish_use_subcommand" -a "install" -d "Install dependencies from package.json" -f
 complete -c poly -n "__fish_use_subcommand" -a "link" -d "Register or link a local npm package" -f
-complete -c poly -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local npm package" -f
-complete -c poly -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
-complete -c poly -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c poly -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
-complete -c poly -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
+complete -c poly -n "__fish_use_subcommand" -a "patch" -d "Prepare a dependency for patching" -f
+complete -c poly -n "__fish_use_subcommand" -a "patch-commit" -d "Save changes to a patched dependency" -f
+complete -c poly -n "__fish_use_subcommand" -a "pm" -d "Run package manager utilities" -f
 complete -c poly -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
-complete -c poly -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
+complete -c poly -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency from package.json" -f
+complete -c poly -n "__fish_use_subcommand" -a "repl" -d "Start a Poly REPL session" -f
+complete -c poly -n "__fish_use_subcommand" -a "run" -d "Run JavaScript, a package.json script, or a package binary" -f
+complete -c poly -n "__fish_use_subcommand" -a "test" -d "Run unit tests" -f
+complete -c poly -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local npm package" -f
+complete -c poly -n "__fish_use_subcommand" -a "update" -d "Update dependencies and package.json" -f
+complete -c poly -n "__fish_use_subcommand" -a "upgrade" -d "Upgrade Poly" -f
+complete -c poly -n "__fish_use_subcommand" -a "why" -d "Explain why a package is installed" -f
+complete -c poly -n "__fish_use_subcommand" -a "x" -d "Install and execute a package binary" -f
+complete -c poly -n "__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from bash zsh fish install" -a "bash" -d "Generate Bash completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from bash zsh fish install" -a "zsh" -d "Generate Zsh completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from bash zsh fish install" -a "fish" -d "Generate Fish completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from bash zsh fish install" -a "install" -d "Install completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions install; and not __fish_seen_subcommand_from bash zsh fish" -a "bash" -d "Install Bash completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions install; and not __fish_seen_subcommand_from bash zsh fish" -a "zsh" -d "Install Zsh completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions install; and not __fish_seen_subcommand_from bash zsh fish" -a "fish" -d "Install Fish completions" -f
+complete -c poly -n "__fish_seen_subcommand_from completions install" -l "dir" -r -F -d "Install into an existing directory"
+complete -c poly -n "__fish_seen_subcommand_from repl; and not __fish_seen_subcommand_from js python py shell sh sql c" -a "js python py shell sh sql c" -d "REPL mode" -f
 complete -c poly -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f
 complete -c poly -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "Evaluate argument as a script, print the result, then exit" -f
 complete -c poly -n "__fish_seen_subcommand_from repl" -s "r" -l "preload" -r -d "Import a module before other modules are loaded"

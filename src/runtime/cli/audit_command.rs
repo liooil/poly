@@ -113,7 +113,7 @@ impl AuditCommand {
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
         bun_core::pretty_error!(
-            "<r><b>bun audit <r><d>v{}<r>\n",
+            "<r><b>poly audit <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();

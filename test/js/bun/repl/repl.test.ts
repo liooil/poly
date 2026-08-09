@@ -9,13 +9,14 @@ async function runRepl(
   input: string | string[],
   options: {
     env?: Record<string, string>;
+    args?: string[];
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {} } = options;
+  const { env = {}, args = [] } = options;
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [bunExe(), "repl", ...args],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
@@ -27,10 +28,11 @@ async function runRepl(
     },
   });
 
-  const exitCode = await proc.exited;
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
 
   return { stdout, stderr, exitCode };
 }
@@ -46,7 +48,12 @@ async function withTerminalRepl(
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
   }) => Promise<void>,
+  options: {
+    args?: string[];
+    env?: Record<string, string>;
+  } = {},
 ) {
+  const { args = [], env = {} } = options;
   const received: string[] = [];
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
@@ -65,11 +72,12 @@ async function withTerminalRepl(
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [bunExe(), "repl", ...args],
     terminal,
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
+      ...env,
     },
   });
 
@@ -113,6 +121,156 @@ async function withTerminalRepl(
 }
 
 describe.concurrent("Bun REPL", () => {
+  test("repl --help shows REPL-specific help", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl", "--help"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "Usage: poly repl [options] [mode]
+
+      Start an interactive REPL in JavaScript, Python, Shell, SQL, or C mode.
+
+      Arguments:
+        mode                        js, python (py), shell (sh), sql, or c. Defaults to js.
+
+      Options:
+        -e, --eval=<STR>           Evaluate argument as a script
+        -p, --print=<STR>          Evaluate argument as a script and print the result
+        -r, --preload=<STR>...     Import a module before other modules are loaded
+            --require=<STR>...     Alias of --preload, for Node.js compatibility
+            --import=<STR>...      Alias of --preload, for Node.js compatibility
+            --cwd=<STR>            Absolute path to resolve files & entry points from. This just changes the process' cwd.
+            --env-file=<STR>...    Load environment variables from the specified file(s)
+            --no-env-file          Disable automatic loading of .env files
+            --inspect=<STR>?       Activate Poly's debugger
+            --smol                 Use less memory, but run garbage collection more often
+        -c, --config=<PATH>?       Specify path to bunfig.toml. Default $cwd/bunfig.toml
+        -h, --help                 Display this menu and exit
+
+      --eval and --print are only supported in JavaScript mode.
+
+      Examples:
+        poly repl
+        poly repl python
+        poly repl shell
+        poly repl --preload ./setup.ts
+        poly repl -p 'const x: number = 21; x * 2'
+        poly repl --inspect
+
+      Inside the REPL, use .help to list interactive commands.
+
+      Learn more about Poly at https://github.com/liooil/poly
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["js", "JavaScript"],
+    ["python", "Python (embedded RustPython)"],
+    ["py", "Python (embedded RustPython)"],
+    ["shell", "Shell (Bun Shell)"],
+    ["sh", "Shell (Bun Shell)"],
+    ["sql", "SQL (in-memory SQLite)"],
+    ["c", "C (embedded TinyCC)"],
+  ])("repl %s starts directly in the requested mode", async (mode, expectedMode) => {
+    const { stdout, stderr, exitCode } = await runRepl([".mode", ".exit"], { args: [mode] });
+    const output = stripAnsi(stdout);
+
+    expect(output).toContain(`Current mode: ${expectedMode}`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("repl rejects an unknown mode", async () => {
+    const { stdout, stderr, exitCode } = await runRepl("", { args: ["ruby"] });
+
+    expect(stdout).toBe("");
+    expect(stripAnsi(stderr)).toBe(
+      "error: Unknown REPL mode \"ruby\". Expected one of: js, python, shell, sql, c.\n",
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("repl rejects arguments after the mode", async () => {
+    const { stdout, stderr, exitCode } = await runRepl("", { args: ["python", "extra"] });
+
+    expect(stdout).toBe("");
+    expect(stripAnsi(stderr)).toBe('error: Unexpected argument "extra" after REPL mode.\n');
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["--eval", "--print"])("repl rejects %s outside JavaScript mode", async flag => {
+    const { stdout, stderr, exitCode } = await runRepl("", { args: ["python", flag, "1 + 1"] });
+
+    expect(stdout).toBe("");
+    expect(stripAnsi(stderr)).toBe(
+      "error: --eval and --print are only supported in JavaScript REPL mode.\n",
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("merges legacy per-language history into one tagged history file", async () => {
+    using dir = tempDir("repl-merged-history", {
+      ".bun_repl_history": "40 + 2\n",
+      ".bun_repl_history.py": "py_value = 42\n",
+      ".bun_repl_history.sh": "echo shell-history\n",
+      ".bun_repl_history.sql": "SELECT 42;\n",
+      ".bun_repl_history.c": "sizeof(int)\n",
+    });
+    const home = String(dir);
+
+    const first = await runRepl([".history", ".exit"], {
+      args: ["python"],
+      env: { HOME: home },
+    });
+    const output = stripAnsi(first.stdout);
+    expect(output).toContain(".js 40 + 2");
+    expect(output).toContain(".py py_value = 42");
+    expect(output).toContain(".sh echo shell-history");
+    expect(output).toContain(".sql SELECT 42;");
+    expect(output).toContain(".c sizeof(int)");
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
+
+    const historyPath = path.join(home, ".bun_repl_history");
+    const expected = [
+      ".js 40 + 2",
+      ".py py_value = 42",
+      ".sh echo shell-history",
+      ".sql SELECT 42;",
+      ".c sizeof(int)",
+      "",
+    ].join("\n");
+    expect(await Bun.file(historyPath).text()).toBe(expected);
+
+    const second = await runRepl(".exit\n", { env: { HOME: home } });
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
+    expect(await Bun.file(historyPath).text()).toBe(expected);
+  });
+
+  test("persists entries from different modes in one tagged history file", async () => {
+    using dir = tempDir("repl-unified-history", {});
+    const home = String(dir);
+
+    const result = await runRepl(
+      ["40 + 2", ".py", "py_value = 42", "def answer():", "    return 42", "", ".exit"],
+      { env: { HOME: home } },
+    );
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(path.join(home, ".bun_repl_history")).text()).toBe(
+      ".js 40 + 2\n.py py_value = 42\n.py def answer():\n.py     return 42\n",
+    );
+  });
+
   describe("basic evaluation", () => {
     test("evaluates simple expression", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1", ".exit"]);
@@ -757,8 +915,8 @@ describe.concurrent("Bun REPL", () => {
     test("shows welcome message with version", async () => {
       const { stdout, exitCode } = await runRepl([".exit"]);
       const output = stripAnsi(stdout);
-      expect(output).toContain("Welcome to Bun");
-      expect(output).toMatch(/Bun v\d+\.\d+\.\d+/);
+      expect(output).toContain("Welcome to Poly");
+      expect(output).toMatch(/Poly v\d+\.\d+\.\d+/);
       expect(exitCode).toBe(0);
     });
   });
@@ -783,7 +941,7 @@ describe.concurrent("Bun REPL", () => {
 
     test("-e does not show welcome message", async () => {
       const { stdout, exitCode } = await runReplWith(["-e", "1 + 1"]);
-      expect(stdout).not.toContain("Welcome to Bun");
+      expect(stdout).not.toContain("Welcome to Poly");
       expect(exitCode).toBe(0);
     });
 
@@ -944,7 +1102,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {
     await withTerminalRepl(async ({ allOutput }) => {
       const output = allOutput();
-      expect(output).toContain("Welcome to Bun");
+      expect(output).toContain("Welcome to Poly");
       expect(output).toMatch(/\u276f|> /);
     });
   });
@@ -1022,6 +1180,28 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       // Should evaluate the same expression again
       await waitFor("333");
     });
+  });
+
+  test("up arrow renders another language's history as an inline command", async () => {
+    using dir = tempDir("repl-cross-language-history", {
+      ".bun_repl_history": ".js 40 + 2\n",
+    });
+
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("\x1b[A");
+        const recalled = await waitFor(".js 40 + 2");
+        expect(stripAnsi(recalled)).toContain(".js 40 + 2");
+
+        send("\n");
+        const evaluated = await waitFor(/\n\s*42\b/);
+        expect(stripAnsi(evaluated)).toMatch(/\n\s*42\b/);
+      },
+      {
+        args: ["python"],
+        env: { HOME: String(dir) },
+      },
+    );
   });
 
   test("down arrow restores temp line after history", async () => {
@@ -1227,7 +1407,7 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
     expect(mode & 0o077).toBe(0);
     expect(mode & 0o600).toBe(0o600);
 
-    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(stripAnsi(stdout)).toContain("Welcome to Poly");
     expect(exitCode).toBe(0);
   });
 
@@ -1261,7 +1441,7 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
     expect(mode & 0o077).toBe(0);
     expect(mode & 0o600).toBe(0o600);
 
-    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(stripAnsi(stdout)).toContain("Welcome to Poly");
     expect(exitCode).toBe(0);
   });
 });
@@ -1288,13 +1468,10 @@ describe.concurrent("--interactive", () => {
   }
 
   test(
-    "prints a Bun-branded banner, not 'Welcome to Node.js'",
+    "prints a Poly-branded banner, not 'Welcome to Node.js'",
     async () => {
-      const { stdout, stderr, exitCode } = await runInteractive([], "");
-      expect({ stdout, stderr }).toEqual({
-        stdout: expect.stringMatching(/^Welcome to Bun v\d+\.\d+\.\d+.*\(Node\.js-compatible REPL/),
-        stderr: expect.not.stringContaining("error"),
-      });
+      const { stdout, exitCode } = await runInteractive([], "");
+      expect(stdout).toMatch(/^Welcome to Poly v\d+\.\d+\.\d+.*\(Node\.js-compatible REPL/);
       expect(stdout).not.toContain("Welcome to Node.js");
       expect(exitCode).toBe(0);
     },
@@ -1341,7 +1518,7 @@ describe.concurrent("--interactive", () => {
     "-e with a syntax error is fatal and never enters the REPL",
     async () => {
       const { stdout, stderr, exitCode } = await runInteractive(["-e", "console.log(1"], "'stdin-ran'\n");
-      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("Welcome to Poly");
       // stdin was never evaluated:
       expect(stdout).not.toContain("stdin-ran");
       // The error is reported against the user's [eval] script, not the bootstrap.
@@ -1369,7 +1546,7 @@ describe.concurrent("--interactive", () => {
     "-e with an unterminated template/comment cannot swallow the bootstrap (%j)",
     async bad => {
       const { stdout, stderr, exitCode } = await runInteractive(["-e", bad], "");
-      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("Welcome to Poly");
       expect(stdout + stderr).toMatch(/SyntaxError/);
       expect(exitCode).toBe(1);
     },
@@ -1455,7 +1632,7 @@ describe.concurrent("--interactive", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("Welcome to Poly");
       expect(stdout).toContain("2");
       expect(stderr).not.toContain("does not support a repl");
       expect(exitCode).toBe(0);
@@ -1537,7 +1714,7 @@ describe.concurrent("--interactive", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("Welcome to Poly");
       expect(stdout).toContain("2");
       expect(stderr).not.toContain("Missing script to execute");
       expect(exitCode).toBe(0);
@@ -1556,7 +1733,7 @@ describe.concurrent("--interactive", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("Welcome to Poly");
       expect(stdout).toContain("2");
       expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);

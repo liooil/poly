@@ -42,7 +42,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(
-            "<r><b>bun link <r><d>v{}<r>\n",
+            "<r><b>poly link <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -286,7 +286,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 "<r><green>Success!<r> Registered \"{}\"\n\
                  \n\
                  To use {} in a project, run:\n  \
-                 <cyan>bun link {}<r>\n\
+                 <cyan>poly link {}<r>\n\
                  \n\
                  Or add it in dependencies in your package.json file:\n  \
                  <cyan>\"{}\": \"link:{}\"<r>\n",

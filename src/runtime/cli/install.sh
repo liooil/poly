@@ -174,7 +174,7 @@ success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
     # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true $exe completions &>/dev/null || :
+    IS_BUN_AUTO_UPDATE=true $exe completions install &>/dev/null || :
 
     echo "Run 'bun --help' to get started"
     exit
@@ -194,7 +194,7 @@ echo
 case $(basename "$SHELL") in
 fish)
     # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions &>/dev/null || :
+    IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions install &>/dev/null || :
 
     commands=(
         "set --export $install_env $quoted_install_dir"
@@ -226,7 +226,7 @@ fish)
     ;;
 zsh)
     # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=zsh $exe completions &>/dev/null || :
+    IS_BUN_AUTO_UPDATE=true SHELL=zsh $exe completions install &>/dev/null || :
 
     commands=(
         "export $install_env=$quoted_install_dir"
@@ -258,7 +258,7 @@ zsh)
     ;;
 bash)
     # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions &>/dev/null || :
+    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions install &>/dev/null || :
 
     commands=(
         "export $install_env=$quoted_install_dir"

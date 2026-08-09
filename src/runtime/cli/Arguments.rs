@@ -100,7 +100,7 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
             "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
         ),
         parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+            "-c, --config <PATH>?              Specify path to bunfig.toml. Default <d>$cwd<r>/bunfig.toml"
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
@@ -560,7 +560,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
     parse_param!(
-        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+        "--rerun-each <NUMBER>            Re-run each test file the specified number of times, helps catch certain bugs"
     ),
     parse_param!(
         "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
@@ -583,7 +583,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
     ),
     parse_param!(
-        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+        "--bail <NUMBER>?                 Exit the test suite after the specified number of failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
@@ -745,6 +745,14 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
 pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+    parse_with_help_command(cmd, cmd, ctx)
+}
+
+pub(crate) fn parse_with_help_command(
+    cmd: CommandTag,
+    help_cmd: CommandTag,
+    ctx: Context<'_>,
+) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -752,10 +760,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         table,
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
-            stop_after_positional_at: match cmd {
-                CommandTag::RunCommand => 2,
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
-                _ => 0,
+            stop_after_positional_at: if help_cmd == CommandTag::ReplCommand {
+                0
+            } else {
+                match cmd {
+                    CommandTag::RunCommand => 2,
+                    CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
+                    _ => 0,
+                }
             },
         },
     ) {
@@ -763,13 +775,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
+            command::tag_print_help(help_cmd, false);
             Global::exit(1);
         }
     };
 
     if args.flag(b"--help") {
-        command::tag_print_help(cmd, true);
+        command::tag_print_help(help_cmd, true);
         Output::flush();
         Global::exit(0);
     }

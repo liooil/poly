@@ -256,7 +256,7 @@ pub mod open {
 // bun_install::PackageManager + a real `Command::Context` (blocked on
 // `create_context_data`), so its help/print-only paths are handled inline in
 // `Command::start()` below. `install_completions_command.rs` is fully wired
-// via `exec_install_completions` (its `exec()` takes no Context).
+// via `exec_install_completions` (it parses its own argv and takes no Context).
 #[path = "init_command.rs"]
 pub mod init_command;
 #[path = "install_completions_command.rs"]
@@ -1142,6 +1142,15 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
+        create_context_data_with_parse_command(cmd, cmd, log)
+    }
+
+    #[inline(always)]
+    fn create_context_data_with_parse_command(
+        cmd: Tag,
+        parse_cmd: Tag,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
         // `CMD` is read by debug logging and `run_command` (feedback dispatch).
         unsafe { CMD.write(Some(cmd)) };
@@ -1152,8 +1161,12 @@ pub mod command {
 
         let ctx = write_context_no_parse(log);
 
-        if USES_GLOBAL_OPTIONS[cmd] {
-            ctx.args = arguments::parse(cmd, ctx)?;
+        if USES_GLOBAL_OPTIONS[parse_cmd] {
+            ctx.args = if parse_cmd == cmd {
+                arguments::parse(cmd, ctx)?
+            } else {
+                arguments::parse_with_help_command(parse_cmd, cmd, ctx)?
+            };
         }
 
         #[cfg(windows)]
@@ -1527,10 +1540,6 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_install_completions() -> CmdResult {
-        // The full
-        // exec handles both the non-tty path (dump the embedded completion
-        // script to stdout) and the tty install path (bunx symlink, fpath/XDG
-        // dir search, profile patching).
         for a in bun::argv().iter().skip(2) {
             if matches!(a, b"--help" | b"-h") {
                 tag_print_help(Tag::InstallCompletionsCommand, true);
@@ -1564,8 +1573,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        // Inits with RunCommand (repl reuses run params).
-        let ctx = init(Tag::RunCommand, log)?;
+        let ctx = create_context_data_with_parse_command(Tag::ReplCommand, Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
 
@@ -1642,34 +1650,42 @@ pub mod command {
     // ─── helper fns hoisted from `Command.start` (kept out of `start` to keep
     //     its stack frame small) ────────────────────────────────────────────
 
-    const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[
-        b"build", b"install", b"add", b"run", b"update", b"link", b"unlink", b"remove", b"create",
-        b"poly", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
-    ];
+    macro_rules! define_completion_lists {
+        ($($command:expr),* $(,)?) => {
+            const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[$($command),*];
+            const REJECT_LIST: &[&[u8]] = &[$($command),*, b"discord"];
+        };
+    }
 
-    // DEFAULT_COMPLETIONS_LIST ++ extras; hand-rolled join (small, fixed).
-    const REJECT_LIST: &[&[u8]] = &[
-        b"build",
-        b"install",
+    define_completion_lists![
         b"add",
-        b"run",
-        b"update",
-        b"link",
-        b"unlink",
-        b"remove",
-        b"create",
-        b"poly",
-        b"upgrade",
-        b"discord",
-        b"test",
-        b"pm",
-        b"x",
-        b"repl",
-        b"info",
-        // extras:
+        b"audit",
         b"build",
+        b"ci",
         b"completions",
+        b"create",
+        b"exec",
+        b"feedback",
         b"help",
+        b"info",
+        b"init",
+        b"install",
+        b"link",
+        b"outdated",
+        b"patch",
+        b"patch-commit",
+        b"pm",
+        b"poly",
+        b"publish",
+        b"remove",
+        b"repl",
+        b"run",
+        b"test",
+        b"unlink",
+        b"update",
+        b"upgrade",
+        b"why",
+        b"x",
     ];
 
     #[cold]
@@ -2070,7 +2086,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>poly test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 "
                 );
                 Output::flush();
@@ -2094,14 +2110,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
   • Automatically starts a hot-reloading dev server
   • Auto-detects & configures TailwindCSS and shadcn/ui
 
-  <b><magenta>bun create \\<MyReactComponent.(jsx|tsx)\\><r>
+  <b><magenta>poly create \\<MyReactComponent.(jsx|tsx)\\><r>
 
 <b>Templates<r><d>:<r>
-  • NPM: Runs <b><magenta>bunx create-\\<template\\><r> with given arguments
+  • NPM: Runs <b><magenta>polyx create-\\<template\\><r> with given arguments
   • GitHub: Downloads repository contents as template
   • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>
 
-Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 "
                 );
                 Output::flush();
@@ -2134,7 +2150,7 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
   <d>{}<r>
   <b><green>poly upgrade<r> <cyan>--{}<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 ",
                     latest,
                     switch_desc,
@@ -2145,8 +2161,48 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
             Tag::ReplCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>poly repl<r> <cyan>[flags]<r>
-  Open a Bun REPL
+<b>Usage<r>: <b><green>poly repl<r> <cyan>[options]<r> <blue>[mode]<r>
+
+Start an interactive REPL in JavaScript, Python, Shell, SQL, or C mode.
+
+<b>Arguments:<r>
+  <blue>mode<r>                        <d>js, python (py), shell (sh), sql, or c. Defaults to js.<r>
+
+<b>Options:<r>"
+                );
+                bun_clap::simple_help_for_long_names(
+                    arguments::RUN_PARAMS,
+                    &[
+                        b"eval",
+                        b"print",
+                        b"preload",
+                        b"require",
+                        b"import",
+                        b"cwd",
+                        b"env-file",
+                        b"no-env-file",
+                        b"inspect",
+                        b"smol",
+                        b"config",
+                        b"help",
+                    ],
+                );
+                pretty!(
+                    "
+
+--eval and --print are only supported in JavaScript mode.
+
+<b>Examples:<r>
+  <b><green>poly repl<r>
+  <b><green>poly repl<r> <blue>python<r>
+  <b><green>poly repl<r> <blue>shell<r>
+  <b><green>poly repl<r> <cyan>--preload<r> <blue>./setup.ts<r>
+  <b><green>poly repl<r> <cyan>-p<r> <blue>'const x: number = 21; x * 2'<r>
+  <b><green>poly repl<r> <cyan>--inspect<r>
+
+Inside the REPL, use <cyan>.help<r> to list interactive commands.
+
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 "
                 );
                 Output::flush();
@@ -2156,13 +2212,13 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                     "\
 <b>Usage: poly exec <r><cyan>\\<script\\><r>
 
-Execute a shell script directly from Bun.
+Execute a shell script directly from Poly.
 
 <b><red>Note<r>: If executing this from a shell, make sure to escape the string!
 
 <b>Examples<d>:<r>
-  <b>bun exec \"echo hi\"<r>
-  <b>bun exec \"echo \\\"hey friends\\\"!\"<r>
+  <b>poly exec \"echo hi\"<r>
+  <b>poly exec \"echo \\\"hey friends\\\"!\"<r>
 "
                 );
                 Output::flush();
@@ -2207,33 +2263,13 @@ Execute a shell script directly from Bun.
   <b><green>poly info<r> <blue>react<r> dependencies
   <b><green>poly info<r> <blue>react<r> versions
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 "
                 );
                 Output::flush();
             }
             Tag::WhyCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>poly why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-Explain why a package is installed
-
-<b>Arguments:<r>
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
-
-<b>Options:<r>
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
-
-<b>Examples:<r>
-  <d>$<r> <b><green>poly why<r> <blue>react<r>
-  <d>$<r> <b><green>poly why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
-  <d>$<r> <b><green>poly why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Why);
             }
             Tag::InitCommand => {
                 pretty!(
@@ -2264,27 +2300,37 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 Output::flush();
             }
             Tag::InstallCompletionsCommand => {
-                pretty!("<b>Usage<r>: <b><green>poly completions<r>\n");
-                Output::flush();
-            }
-            Tag::PackageManagerCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>poly pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
-  Run package manager utilities.
+<b>Usage<r>:
+  <b><green>poly completions<r> <blue>[\\<shell\\>]<r>
+  <b><green>poly completions install<r> <blue>[\\<shell\\>]<r> <cyan>[--dir \\<path\\>]<r>
+
+Generate or install shell completion scripts for Poly.
+
+<b>Arguments:<r>
+  <blue>\\<shell\\><r>       <d>Shell to generate or install completions for: bash, zsh, or fish.
+                  Defaults to the current shell from $SHELL.<r>
 
 <b>Commands:<r>
-  <b><green>poly pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>poly pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
-  <b><green>poly pm<r> <blue>whoami<r>           print the current npm username
-  <b><green>poly pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
-  <b><green>poly pm<r> <blue>cache<r>            print the path to the cache folder
-  <b><green>poly pm<r> <blue>cache rm<r>         clear the cache
+  <b><green>install<r>         Install completions into a detected shell directory.
 
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
+<b>Options:<r>
+  <cyan>--dir \\<path\\><r>     Install into an existing directory instead of auto-detecting one.
+  <cyan>-h, --help<r>       Display this menu and exit.
+
+<b>Examples:<r>
+  <b><green>poly completions bash<r> <d>\\><r> <blue>~/.local/share/bash-completion/completions/poly.bash<r>
+  <b><green>poly completions zsh<r> <d>\\><r> <blue>~/.zfunc/_poly<r>
+  <b><green>poly completions fish<r> <d>\\><r> <blue>~/.config/fish/completions/poly.fish<r>
+  <b><green>poly completions install<r>
+  <b><green>poly completions install zsh<r> <cyan>--dir<r> <blue>~/.zfunc<r>
 "
                 );
                 Output::flush();
+            }
+            Tag::PackageManagerCommand => {
+                pm_print_help(PmSubcommand::Pm);
             }
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }

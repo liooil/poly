@@ -386,7 +386,7 @@ impl PmVersionCommand {
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 
         bun_core::prettyln!(
-            "<r><b>bun pm version<r> <d>v{}<r>",
+            "<r><b>poly pm version<r> <d>v{}<r>",
             Global::package_json_version_with_sha
         );
         if let Some(version) = &_current_version {
@@ -471,11 +471,11 @@ impl PmVersionCommand {
              \x20 <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>\n\
              \n\
              <b>Examples<r>:\n\
-             \x20 <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>\n\
-             \x20 <d>$<r> <b><green>bun pm version<r> <blue>1.2.3<r> <cyan>--no-git-tag-version<r>\n\
-             \x20 <d>$<r> <b><green>bun pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r> <cyan>--message<r> <blue>\"Release beta: %s\"<r>\n\
+             \x20 <d>$<r> <b><green>poly pm version<r> <cyan>patch<r>\n\
+             \x20 <d>$<r> <b><green>poly pm version<r> <blue>1.2.3<r> <cyan>--no-git-tag-version<r>\n\
+             \x20 <d>$<r> <b><green>poly pm version<r> <cyan>prerelease<r> <cyan>--preid<r> <blue>beta<r> <cyan>--message<r> <blue>\"Release beta: %s\"<r>\n\
              \n\
-             More info: <magenta>https://bun.com/docs/cli/pm#version<r>\n",
+             More info: <magenta>https://github.com/liooil/poly<r>\n",
             BStr::new(&beta_prerelease_version),
         );
         Output::flush();

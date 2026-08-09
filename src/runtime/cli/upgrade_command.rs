@@ -1318,7 +1318,8 @@ impl UpgradeCommand {
 
             // Ensure completions are up to date.
             {
-                let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
+                let completions_argv: [&[u8]; 3] =
+                    [target_filename.as_bytes(), b"completions", b"install"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
                 // `spawn_sync` takes the C-style `[*:null]?[*:0]const u8` envp

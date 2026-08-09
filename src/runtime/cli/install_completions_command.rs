@@ -1,8 +1,9 @@
+use bun_core::note;
 use bun_core::pretty_errorln;
+#[cfg(not(windows))]
+use bun_core::print_errorln;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
-#[cfg(not(windows))]
-use bun_core::{note, print_errorln};
 use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -13,6 +14,18 @@ use bun_sys::{self, E, File};
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
 pub(crate) struct InstallCompletionsCommand;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompletionAction {
+    Generate,
+    Install,
+}
+
+struct CompletionOptions {
+    action: CompletionAction,
+    shell: Shell,
+    directory: Option<&'static [u8]>,
+}
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
@@ -169,6 +182,134 @@ impl InstallCompletionsCommand {
         }
     }
 
+    fn supported_shell(value: &[u8]) -> Option<Shell> {
+        match Shell::from_env(value) {
+            shell @ (Shell::Bash | Shell::Zsh | Shell::Fish) => Some(shell),
+            _ => None,
+        }
+    }
+
+    fn detected_shell(fail_exit_code: u32, action: CompletionAction) -> Shell {
+        if let Some(shell_name) = env_var::SHELL.platform_get() {
+            if let Some(shell) = Self::supported_shell(shell_name) {
+                return shell;
+            }
+        }
+
+        pretty_errorln!(
+            "<r><red>error:<r> Could not determine a supported shell from $SHELL. Expected bash, zsh, or fish."
+        );
+        match action {
+            CompletionAction::Generate => note!("Pass one explicitly: poly completions bash"),
+            CompletionAction::Install => {
+                note!("Pass one explicitly: poly completions install bash")
+            }
+        }
+        Global::exit(fail_exit_code);
+    }
+
+    fn invalid_argument(message: std::fmt::Arguments<'_>, fail_exit_code: u32) -> ! {
+        pretty_errorln!("<r><red>error:<r> {}", message);
+        note!("Run 'poly completions --help' for usage");
+        Global::exit(fail_exit_code);
+    }
+
+    fn parse_options(
+        args: &[&'static [u8]],
+        auto_update: bool,
+        fail_exit_code: u32,
+    ) -> CompletionOptions {
+        // Older Poly versions invoke the newly downloaded binary as
+        // `poly completions` during upgrades, without the `install` argument.
+        let mut action = if auto_update && args.is_empty() {
+            CompletionAction::Install
+        } else {
+            CompletionAction::Generate
+        };
+        let mut index = 0;
+        if args.first().is_some_and(|arg| *arg == b"install") {
+            action = CompletionAction::Install;
+            index = 1;
+        }
+
+        let mut shell = None;
+        let mut directory = None;
+        while index < args.len() {
+            let arg = args[index];
+            if arg == b"--dir" {
+                if action != CompletionAction::Install {
+                    Self::invalid_argument(
+                        format_args!("--dir can only be used with 'poly completions install'."),
+                        fail_exit_code,
+                    );
+                }
+                index += 1;
+                let Some(path) = args.get(index).copied() else {
+                    Self::invalid_argument(
+                        format_args!("--dir requires a directory path."),
+                        fail_exit_code,
+                    );
+                };
+                if path.is_empty() || directory.replace(path).is_some() {
+                    Self::invalid_argument(
+                        format_args!("--dir may only be specified once with a non-empty path."),
+                        fail_exit_code,
+                    );
+                }
+            } else if let Some(path) = arg.strip_prefix(b"--dir=") {
+                if action != CompletionAction::Install {
+                    Self::invalid_argument(
+                        format_args!("--dir can only be used with 'poly completions install'."),
+                        fail_exit_code,
+                    );
+                }
+                if path.is_empty() || directory.replace(path).is_some() {
+                    Self::invalid_argument(
+                        format_args!("--dir may only be specified once with a non-empty path."),
+                        fail_exit_code,
+                    );
+                }
+            } else if arg.starts_with(b"-") {
+                Self::invalid_argument(
+                    format_args!("Unknown option '{}'.", bstr::BStr::new(arg)),
+                    fail_exit_code,
+                );
+            } else if shell.is_some() {
+                Self::invalid_argument(
+                    format_args!("Unexpected argument '{}'.", bstr::BStr::new(arg)),
+                    fail_exit_code,
+                );
+            } else if let Some(parsed_shell) = Self::supported_shell(arg) {
+                shell = Some(parsed_shell);
+            } else {
+                Self::invalid_argument(
+                    format_args!(
+                        "Unsupported shell '{}'. Expected bash, zsh, or fish.",
+                        bstr::BStr::new(arg)
+                    ),
+                    fail_exit_code,
+                );
+            }
+            index += 1;
+        }
+
+        CompletionOptions {
+            action,
+            shell: shell.unwrap_or_else(|| Self::detected_shell(fail_exit_code, action)),
+            directory,
+        }
+    }
+
+    fn write_script(shell: Shell) -> Result<(), crate::Error> {
+        if let Err(err) = File::stdout().write_all(shell.completions()) {
+            if err.get_errno() == E::EPIPE {
+                Global::exit(0);
+            }
+            return Err(err.into());
+        }
+        Ok(())
+    }
+
     #[cfg(windows)]
     fn install_uninstaller_windows() -> Result<(), crate::Error> {
         use bun_core::w;
@@ -205,127 +346,66 @@ impl InstallCompletionsCommand {
     }
 
     pub(crate) fn exec() -> Result<(), crate::Error> {
-        // Fail silently on auto-update.
-        let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-            1
-        } else {
-            0
-        };
+        let auto_update = env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false);
+        let fail_exit_code = u32::from(!auto_update);
+        let args: Vec<&'static [u8]> = bun_core::argv().iter().skip(2).collect();
+        let options = Self::parse_options(&args, auto_update, fail_exit_code);
 
-        let mut cwd_buf = PathBuffer::uninit();
-
-        let stdout = File::stdout();
-
-        let mut shell = Shell::Unknown;
-        if let Some(shell_name) = env_var::SHELL.platform_get() {
-            shell = Shell::from_env(shell_name);
+        if options.action == CompletionAction::Generate {
+            return Self::write_script(options.shell);
         }
 
+        let mut cwd_buf = PathBuffer::uninit();
         let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => len,
             Err(_) => {
-                // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 {
-                    if !bun_sys::isatty(stdout.handle) {
-                        if let Err(err) = stdout.write_all(shell.completions()) {
-                            if err.get_errno() == E::EPIPE {
-                                Global::exit(0);
-                            } else {
-                                return Err(err.into());
-                            }
-                        }
-                        Global::exit(0);
-                    }
-                }
-
                 pretty_errorln!("<r><red>error<r>: Could not get current working directory");
                 Global::exit(fail_exit_code);
             }
         };
         let cwd: &[u8] = &cwd_buf[..cwd_len];
 
-        let _ = Self::install_bunx_symlink(cwd);
+        if auto_update {
+            let _ = Self::install_bunx_symlink(cwd);
 
-        #[cfg(windows)]
-        {
-            let _ = Self::install_uninstaller_windows();
+            #[cfg(windows)]
+            {
+                let _ = Self::install_uninstaller_windows();
+            }
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
         #[cfg(windows)]
         {
             Output::err_generic(
-                "PowerShell completions are not yet written for Bun yet.",
+                "Installing shell completions is not implemented for Poly on Windows.",
                 format_args!(""),
             );
-            Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
-            return Ok(());
+            Global::exit(fail_exit_code);
         }
 
         #[cfg(not(windows))]
         {
-            match shell {
-                Shell::Unknown => {
-                    Output::err_generic(
-                        "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
-                        format_args!(""),
-                    );
-                    note!("To manually output completions, run 'poly getcompletes'");
-                    Global::exit(fail_exit_code);
-                }
-                _ => {}
-            }
-
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-                if !bun_sys::isatty(stdout.handle) {
-                    if let Err(err) = stdout.write_all(shell.completions()) {
-                        if err.get_errno() == E::EPIPE {
-                            Global::exit(0);
-                        } else {
-                            return Err(err.into());
-                        }
-                    }
-                    Global::exit(0);
-                }
-            }
+            let shell = options.shell;
 
             let mut completions_dir: &[u8];
             let output_dir: bun_sys::Fd = 'found: {
-                let argv = bun_core::argv();
-                for (i, arg) in argv.iter().enumerate() {
-                    if arg == b"completions" {
-                        if argv.len() > i + 1 {
-                            let input: &[u8] = argv.get(i + 1).expect("len checked").as_bytes();
+                if let Some(input) = options.directory {
+                    if !bun_paths::is_absolute(input) {
+                        completions_dir = resolve_path::join_abs::<platform::Auto>(cwd, input);
+                    } else {
+                        completions_dir = input;
+                    }
 
-                            if !bun_paths::is_absolute(input) {
-                                completions_dir =
-                                    resolve_path::join_abs::<platform::Auto>(cwd, input);
-                            } else {
-                                completions_dir = input;
-                            }
-
-                            if !bun_paths::is_absolute(completions_dir) {
-                                pretty_errorln!(
-                                    "<r><red>error:<r> Please pass an absolute path. {} is invalid",
-                                    bstr::BStr::new(completions_dir),
-                                );
-                                Global::exit(fail_exit_code);
-                            }
-
-                            match bun_sys::open_dir_absolute(completions_dir) {
-                                Ok(d) => break 'found d,
-                                Err(err) => {
-                                    pretty_errorln!(
-                                        "<r><red>error:<r> accessing {} errored {}",
-                                        bstr::BStr::new(completions_dir),
-                                        bstr::BStr::new(err.name()),
-                                    );
-                                    Global::exit(fail_exit_code);
-                                }
-                            }
+                    match bun_sys::open_dir_absolute(completions_dir) {
+                        Ok(d) => break 'found d,
+                        Err(err) => {
+                            pretty_errorln!(
+                                "<r><red>error:<r> Could not access completion directory '{}': {}",
+                                bstr::BStr::new(completions_dir),
+                                bstr::BStr::new(err.name()),
+                            );
+                            Global::exit(fail_exit_code);
                         }
-
-                        break;
                     }
                 }
 
@@ -509,12 +589,12 @@ impl InstallCompletionsCommand {
 
                 if shell == Shell::Zsh {
                     pretty_errorln!(
-                        "\nzsh tip: One of the directories in $fpath might work. If you use oh-my-zsh, try mkdir $HOME/.oh-my-zsh/completions; and bun completions again\n.",
+                        "\nzsh tip: One of the directories in $fpath might work. With oh-my-zsh, run `mkdir $HOME/.oh-my-zsh/completions` and then `poly completions install zsh`.\n",
                     );
                 }
 
                 print_errorln!(
-                    "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
+                    "Generate the completion script:\n   poly completions <shell> > /to/a/file\n\nOr pass an existing install directory:\n   poly completions install <shell> --dir /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
             };
@@ -522,7 +602,7 @@ impl InstallCompletionsCommand {
             let filename: &[u8] = match shell {
                 Shell::Fish => b"poly.fish",
                 Shell::Zsh => b"_poly",
-                Shell::Bash => b"poly.completion.bash",
+                Shell::Bash => b"poly.bash",
                 _ => unreachable!(),
             };
 
@@ -662,6 +742,7 @@ impl InstallCompletionsCommand {
 
                     // Do they possibly have it in the file already?
                     if strings::contains(contents, completions_path)
+                        || strings::contains(contents, b"# poly completions\n")
                         || strings::contains(contents, b"# bun completions\n")
                     {
                         break 'brk false;
@@ -674,7 +755,7 @@ impl InstallCompletionsCommand {
                     let extra = buf_print(
                         remaining,
                         format_args!(
-                            "\n# bun completions\n[ -s \"{0}\" ] && source \"{0}\"\n",
+                            "\n# poly completions\n[ -s \"{0}\" ] && source \"{0}\"\n",
                             bstr::BStr::new(completions_path)
                         ),
                     );
@@ -686,7 +767,7 @@ impl InstallCompletionsCommand {
                         break 'brk true;
                     }
 
-                    pretty_errorln!("<r><d>Enabled loading bun's completions in .zshrc<r>");
+                    pretty_errorln!("<r><d>Enabled loading Poly's completions in .zshrc<r>");
                     break 'brk false;
                 };
 

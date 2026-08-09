@@ -13,6 +13,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
+use bstr::BStr;
 use bun_alloc::Arena;
 use bun_core::ZigString;
 use bun_core::{Global, Output};
@@ -23,7 +24,7 @@ use bun_jsc::{self as jsc, JSGlobalObject};
 // module here so `Repl` resolves without touching `cli/mod.rs`.
 #[path = "repl.rs"]
 mod repl;
-use repl::Repl;
+use repl::{Repl, ReplMode};
 
 use crate::Command;
 use crate::cli::Arguments;
@@ -33,8 +34,35 @@ pub(crate) struct ReplCommand;
 impl ReplCommand {
     #[cold]
     pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), crate::Error> {
+        let initial_mode = match ctx.positionals.get(1) {
+            Some(name) => ReplMode::from_cli_name(name).unwrap_or_else(|| {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Unknown REPL mode \"{}\". Expected one of: js, python, shell, sql, c.",
+                    BStr::new(name)
+                );
+                Global::exit(1);
+            }),
+            None => ReplMode::Js,
+        };
+        if let Some(argument) = ctx.positionals.get(2) {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> Unexpected argument \"{}\" after REPL mode.",
+                BStr::new(argument)
+            );
+            Global::exit(1);
+        }
+        if initial_mode != ReplMode::Js
+            && (!ctx.runtime_options.eval.script.is_empty()
+                || ctx.runtime_options.eval.eval_and_print)
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> --eval and --print are only supported in JavaScript REPL mode."
+            );
+            Global::exit(1);
+        }
+
         // Initialize the REPL
-        let mut repl = Repl::init();
+        let mut repl = Repl::init(initial_mode);
         // `defer repl.deinit()` → handled by Drop
 
         // Boot the JavaScript VM for the REPL

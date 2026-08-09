@@ -531,7 +531,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         bun_core::prettyln!(
-            "<r><b>bun publish <r><d>v{}<r>",
+            "<r><b>poly publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -546,7 +546,7 @@ impl PublishCommand {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing to publish", ());
                         }
-                        Output::err_generic("failed to initialize bun install: {}", (err.name(),));
+                        Output::err_generic("failed to initialize poly install: {}", (err.name(),));
                     }
                     Global::crash();
                 }

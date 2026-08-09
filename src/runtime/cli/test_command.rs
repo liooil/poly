@@ -2858,7 +2858,7 @@ impl TestCommand {
             }
             if !Output::is_ai_agent() {
                 pretty_error!(
-                    "\nLearn more about bun test: <magenta>https://bun.com/docs/cli/test<r>",
+                    "\nLearn more about poly test: <magenta>https://github.com/liooil/poly<r>",
                 );
             }
         } else {

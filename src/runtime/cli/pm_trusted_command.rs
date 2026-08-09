@@ -51,7 +51,7 @@ impl UntrustedCommand {
     ) -> crate::Result<()> {
         let _ = args;
         bun_core::pretty_error!(
-            "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
+            "<r><b>poly pm untrusted <r><d>v{}<r>\n\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -187,7 +187,7 @@ impl UntrustedCommand {
         bun_core::pretty!(
             "These dependencies had their lifecycle scripts blocked during install.\n\
              \n\
-             If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm trust<r><d>`<r>.\n"
+             If you trust them and wish to run their scripts, use <d>`<r><blue>poly pm trust<r><d>`<r>.\n"
         );
 
         let _ = ctx;
@@ -244,7 +244,7 @@ impl TrustCommand {
         args: &[&[u8]],
     ) -> crate::Result<()> {
         bun_core::pretty_error!(
-            "<r><b>bun pm trust <r><d>v{}<r>\n",
+            "<r><b>poly pm trust <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();

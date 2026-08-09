@@ -62,18 +62,12 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
-// Per-language history files: switching modes loads the matching file so
-// each language keeps its own command history (JS stays on the legacy name
-// for backward compatibility).
-fn history_filename_for_mode(mode: ReplMode) -> &'static [u8] {
-    match mode {
-        ReplMode::Js => HISTORY_FILENAME,
-        ReplMode::Python => b".bun_repl_history.py",
-        ReplMode::Shell => b".bun_repl_history.sh",
-        ReplMode::Sql => b".bun_repl_history.sql",
-        ReplMode::C => b".bun_repl_history.c",
-    }
-}
+const LEGACY_HISTORY_FILENAMES: &[(ReplMode, &[u8])] = &[
+    (ReplMode::Python, b".bun_repl_history.py"),
+    (ReplMode::Shell, b".bun_repl_history.sh"),
+    (ReplMode::Sql, b".bun_repl_history.sql"),
+    (ReplMode::C, b".bun_repl_history.c"),
+];
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -176,8 +170,50 @@ impl Key {
 // History
 // ============================================================================
 
+struct HistoryEntry {
+    mode: ReplMode,
+    code: Box<[u8]>,
+}
+
+impl HistoryEntry {
+    fn init(mode: ReplMode, code: &[u8]) -> Self {
+        Self {
+            mode,
+            code: Box::<[u8]>::from(code),
+        }
+    }
+
+    fn append_inline(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(self.mode.inline_command());
+        output.push(b' ');
+        output.extend_from_slice(&self.code);
+    }
+
+    fn append_persisted(&self, output: &mut Vec<u8>) {
+        for line in strings::split(&self.code, b"\n") {
+            if line.is_empty() {
+                continue;
+            }
+            output.extend_from_slice(self.mode.inline_command());
+            output.push(b' ');
+            output.extend_from_slice(line);
+            output.push(b'\n');
+        }
+    }
+
+    fn for_mode(&self, mode: ReplMode) -> Vec<u8> {
+        if self.mode == mode {
+            return self.code.to_vec();
+        }
+
+        let mut output = Vec::with_capacity(self.mode.inline_command().len() + 1 + self.code.len());
+        self.append_inline(&mut output);
+        output
+    }
+}
+
 struct History {
-    entries: Vec<Box<[u8]>>,
+    entries: Vec<HistoryEntry>,
     position: usize,
     temp_line: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
@@ -196,10 +232,6 @@ impl History {
     }
 
     fn load(&mut self) -> Result<(), crate::Error> {
-        self.load_from(HISTORY_FILENAME)
-    }
-
-    fn load_from(&mut self, filename: &[u8]) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -210,41 +242,65 @@ impl History {
         let mut path_buf = PathBuffer::uninit();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut path_buf,
-            &[home_path, filename],
+            &[home_path, HISTORY_FILENAME],
         );
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
-            sys::Result::Ok(bytes) => bytes.into(),
-            sys::Result::Err(_) => return Ok(()),
-        };
-
-        for line in strings::split(&content, b"\n") {
-            if !line.is_empty() {
-                self.entries.push(Box::<[u8]>::from(line));
+        let mut has_tagged_entries = false;
+        let mut needs_rewrite = false;
+        if let sys::Result::Ok(content) = sys::File::read_from(Fd::cwd(), path) {
+            for line in strings::split(&content, b"\n") {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((mode, code)) = Self::parse_inline(line) {
+                    has_tagged_entries = true;
+                    if !code.is_empty() {
+                        self.entries.push(HistoryEntry::init(mode, code));
+                    }
+                } else {
+                    self.entries.push(HistoryEntry::init(ReplMode::Js, line));
+                    needs_rewrite = true;
+                }
             }
         }
 
-        // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
+        if !has_tagged_entries {
+            // The legacy files have no shared timestamps, so preserve each
+            // file's order and append them in language order during migration.
+            for &(mode, filename) in LEGACY_HISTORY_FILENAMES {
+                let mut legacy_path_buf = PathBuffer::uninit();
+                let legacy_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                    &mut legacy_path_buf,
+                    &[home_path, filename],
+                );
+                let sys::Result::Ok(content) = sys::File::read_from(Fd::cwd(), legacy_path) else {
+                    continue;
+                };
+                for line in strings::split(&content, b"\n") {
+                    if !line.is_empty() {
+                        self.entries.push(HistoryEntry::init(mode, line));
+                        needs_rewrite = true;
+                    }
+                }
+            }
         }
 
+        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        self.entries.drain(..excess);
         self.position = self.entries.len();
-        self.modified = false;
+        self.modified = needs_rewrite;
         Ok(())
     }
 
-    /// Switch to a different language's history file: save the current
-    /// session's entries, clear the in-memory list, and load the new file.
-    fn switch_mode(&mut self, mode: ReplMode) -> Result<(), crate::Error> {
-        self.save();
-        self.entries.clear();
-        self.position = 0;
-        self.temp_line = None;
-        self.file_path = None;
-        self.modified = false;
-        self.load_from(history_filename_for_mode(mode))
+    fn parse_inline(line: &[u8]) -> Option<(ReplMode, &[u8])> {
+        for mode in ReplMode::ALL {
+            let command = mode.inline_command();
+            if line.starts_with(command) && line.get(command.len()) == Some(&b' ') {
+                return Some((mode, &line[command.len() + 1..]));
+            }
+        }
+        None
     }
 
     fn save(&mut self) {
@@ -264,8 +320,7 @@ impl History {
 
         let mut content: Vec<u8> = Vec::new();
         for entry in &self.entries[start..] {
-            content.extend_from_slice(entry);
-            content.push(b'\n');
+            entry.append_persisted(&mut content);
         }
 
         let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
@@ -282,20 +337,20 @@ impl History {
         self.modified = false;
     }
 
-    fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn add(&mut self, mode: ReplMode, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
 
         // Don't add duplicates of the last entry
         if let Some(last) = self.entries.last() {
-            if strings::eql_long(last, line, true) {
+            if last.mode == mode && strings::eql_long(&last.code, line, true) {
                 self.position = self.entries.len();
                 return Ok(());
             }
         }
 
-        self.entries.push(Box::<[u8]>::from(line));
+        self.entries.push(HistoryEntry::init(mode, line));
         self.position = self.entries.len();
         self.modified = true;
 
@@ -307,7 +362,7 @@ impl History {
         Ok(())
     }
 
-    fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+    fn prev(&mut self, current_line: &[u8], mode: ReplMode) -> Option<Vec<u8>> {
         if self.entries.is_empty() {
             return None;
         }
@@ -319,25 +374,23 @@ impl History {
 
         if self.position > 0 {
             self.position -= 1;
-            return Some(&self.entries[self.position]);
+            return Some(self.entries[self.position].for_mode(mode));
         }
 
         None
     }
 
-    fn next(&mut self) -> Option<&[u8]> {
+    fn next(&mut self, mode: ReplMode) -> Option<Vec<u8>> {
         if self.position < self.entries.len() {
             self.position += 1;
         }
 
         if self.position == self.entries.len() {
-            // Keep ownership in History; reset_position() frees temp_line.
-            // Caller copies the data via set(), so borrowed reference is safe.
-            return self.temp_line.as_deref();
+            return self.temp_line.as_deref().map(|line| line.to_vec());
         }
 
         if self.position < self.entries.len() {
-            return Some(&self.entries[self.position]);
+            return Some(self.entries[self.position].for_mode(mode));
         }
 
         None
@@ -883,8 +936,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
     // Build content
     let mut content: Vec<u8> = Vec::new();
     for entry in &repl.history.entries {
-        content.extend_from_slice(entry);
-        content.push(b'\n');
+        entry.append_persisted(&mut content);
     }
 
     let file = match sys::open_a(
@@ -950,11 +1002,12 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     for (i, entry) in repl.history.entries[start..].iter().enumerate() {
         let i = i + start;
         repl.print(format_args!(
-            "  {}{:>4}{}  {}\n",
+            "  {}{:>4}{}  {} {}\n",
             Color::DIM,
             i + 1,
             Color::RESET,
-            BStr::new(entry)
+            BStr::new(entry.mode.inline_command()),
+            BStr::new(&entry.code)
         ));
     }
     repl.print(format_args!("\n"));
@@ -967,7 +1020,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 
 /// Which language the REPL evaluates inputs as.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ReplMode {
+pub(super) enum ReplMode {
     Js,
     Python,
     /// Bun Shell — each input runs in-process via `$`.
@@ -980,6 +1033,25 @@ enum ReplMode {
 }
 
 impl ReplMode {
+    const ALL: [Self; 5] = [
+        ReplMode::Js,
+        ReplMode::Python,
+        ReplMode::Shell,
+        ReplMode::Sql,
+        ReplMode::C,
+    ];
+
+    pub(super) fn from_cli_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"js" => Some(ReplMode::Js),
+            b"python" | b"py" => Some(ReplMode::Python),
+            b"shell" | b"sh" => Some(ReplMode::Shell),
+            b"sql" => Some(ReplMode::Sql),
+            b"c" => Some(ReplMode::C),
+            _ => None,
+        }
+    }
+
     fn name(self) -> &'static str {
         match self {
             ReplMode::Js => "JavaScript",
@@ -987,6 +1059,16 @@ impl ReplMode {
             ReplMode::Shell => "Shell (Bun Shell)",
             ReplMode::Sql => "SQL (in-memory SQLite)",
             ReplMode::C => "C (embedded TinyCC)",
+        }
+    }
+
+    fn inline_command(self) -> &'static [u8] {
+        match self {
+            ReplMode::Js => b".js",
+            ReplMode::Python => b".py",
+            ReplMode::Shell => b".sh",
+            ReplMode::Sql => b".sql",
+            ReplMode::C => b".c",
         }
     }
 }
@@ -1048,13 +1130,13 @@ pub(super) struct Repl<'a> {
 }
 
 impl<'a> Repl<'a> {
-    pub(super) fn init() -> Repl<'a> {
+    pub(super) fn init(mode: ReplMode) -> Repl<'a> {
         Repl {
             line_editor: LineEditor::init(),
             history: History::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
-            mode: ReplMode::Js,
+            mode,
             input_mode: InputMode::Normal,
             running: false,
             is_tty: false,
@@ -2137,13 +2219,12 @@ impl<'a> Repl<'a> {
         self.mode = prev;
     }
 
-    /// Switch the active language mode, swapping in that language's history
-    /// file and resetting any in-progress multiline/editor input.
+    /// Switch the active language mode and reset any in-progress
+    /// multiline/editor input and history navigation.
     fn switch_mode(&mut self, new_mode: ReplMode) {
         if self.mode == new_mode {
             return;
         }
-        let _ = self.history.switch_mode(new_mode);
         self.mode = new_mode;
         self.input_mode = InputMode::Normal;
         self.multiline_buffer.clear();
@@ -2724,21 +2805,32 @@ impl<'a> Repl<'a> {
 
         // Print welcome message
         self.print(format_args!("Welcome to Poly v{}\n", VERSION));
-        self.print(format_args!(
-            "JavaScript mode by default. Type {}.py{} for Python (RustPython), {}.sh{} for Shell (Bun Shell), {}.sql{} for SQL (SQLite), {}.c{} for C (TinyCC), {}.js{} to switch back. {}.help{} for more info.\n\n",
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET
-        ));
+        if self.mode == ReplMode::Js {
+            self.print(format_args!(
+                "JavaScript mode by default. Type {}.py{} for Python (RustPython), {}.sh{} for Shell (Bun Shell), {}.sql{} for SQL (SQLite), {}.c{} for C (TinyCC), {}.js{} to switch back. {}.help{} for more info.\n\n",
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET
+            ));
+        } else {
+            self.print(format_args!(
+                "Starting in {} mode. Type {}.js{} for JavaScript or {}.help{} for more info.\n\n",
+                self.mode.name(),
+                Color::CYAN,
+                Color::RESET,
+                Color::CYAN,
+                Color::RESET
+            ));
+        }
 
         self.running = true;
         self.refresh_line();
@@ -2839,17 +2931,14 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
-                    // Note: reshaped for borrowck — copy line before mutating history
                     let cur = self.line_editor.get_line().to_vec();
-                    if let Some(prev_line) = self.history.prev(&cur) {
-                        let prev_line = prev_line.to_vec();
+                    if let Some(prev_line) = self.history.prev(&cur, self.mode) {
                         let _ = self.line_editor.set(&prev_line);
                         self.refresh_line();
                     }
                 }
                 Key::ArrowDown | Key::CtrlN => {
-                    if let Some(next_line) = self.history.next() {
-                        let next_line = next_line.to_vec();
+                    if let Some(next_line) = self.history.next(self.mode) {
                         let _ = self.line_editor.set(&next_line);
                     } else {
                         self.line_editor.clear();
@@ -2979,7 +3068,8 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                     return Ok(());
                 }
-                self.history.add(strings::trim(&full_code, b"\n"))?;
+                self.history
+                    .add(ReplMode::Python, strings::trim(&full_code, b"\n"))?;
                 self.line_editor.clear();
                 self.multiline_buffer.clear();
                 self.input_mode = InputMode::Normal;
@@ -3007,7 +3097,8 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                     return Ok(());
                 }
-                self.history.add(strings::trim(&full_code, b"\n"))?;
+                self.history
+                    .add(self.mode, strings::trim(&full_code, b"\n"))?;
                 self.eval_cheap_language(&full_code);
                 self.line_editor.clear();
                 self.multiline_buffer.clear();
@@ -3037,7 +3128,8 @@ impl<'a> Repl<'a> {
             Box::<[u8]>::from(line.as_slice())
         };
 
-        self.history.add(strings::trim(&code_to_eval, b"\n"))?;
+        self.history
+            .add(ReplMode::Js, strings::trim(&code_to_eval, b"\n"))?;
 
         self.evaluate_and_print(&code_to_eval);
         // Fuse new globalThis user variables into Python's globals().

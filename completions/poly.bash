@@ -74,22 +74,10 @@ _read_scripts_in_package_json() {
 }
 
 
-_subcommand_comp_reply() {
-    local cur_word="${1}"
-    local sub_commands="${2}"
-    local regexp_subcommand="^[dbcriauh]";
-    [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-        COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
-    }
-}
-
-
 _poly_completions() {
     declare -A GLOBAL_OPTIONS;
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
-
-    local SUBCOMMANDS="dev poly create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
@@ -123,6 +111,11 @@ _poly_completions() {
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
+        --dir)
+            if [[ "${COMP_WORDS[1]}" == "completions" ]]; then
+                COMPREPLY=( $(compgen -d -- "${cur_word}" ));
+                return;
+            fi;;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;
@@ -138,7 +131,14 @@ _poly_completions() {
     esac
 
     case "${COMP_WORDS[1]}" in
-        help|completions|--help|-h|-v|--version) return;;
+        help|--help|-h|-v|--version) return;;
+        completions)
+            if [[ "${COMP_WORDS[2]}" == "install" ]]; then
+                COMPREPLY=( $(compgen -W "bash zsh fish --dir --help -h" -- "${cur_word}") );
+            elif (( COMP_CWORD == 2 )); then
+                COMPREPLY=( $(compgen -W "bash zsh fish install --help -h" -- "${cur_word}") );
+            fi
+            return;;
         add|a)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
@@ -156,7 +156,7 @@ _poly_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return;;
         repl)
-            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "js python py shell sh sql c --help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
@@ -174,8 +174,14 @@ _poly_completions() {
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
 
+            if (( COMP_CWORD == 1 )); then
+                local dynamic_completions
+                dynamic_completions="$(SHELL=bash poly getcompletes)"
+                COMPREPLY+=( $(compgen -W "${dynamic_completions}" -- "${cur_word}") );
+                return;
+            fi
+
             _read_scripts_in_package_json;
-            _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
 
             # determine if completion should be continued
             # when the current word is an empty string

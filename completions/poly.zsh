@@ -493,7 +493,7 @@ _poly_run_completion() {
 
     case $state in
     script)
-        curcontext="${curcontext%:*:*}:bun-grouped"
+        curcontext="${curcontext%:*:*}:poly-grouped"
         _poly_run_param_script_completion
 
         ;;
@@ -545,6 +545,17 @@ _poly_repl_completion() {
         ret=0
 
     case $state in
+    cmd)
+        _values 'REPL mode' \
+            'js[JavaScript]' \
+            'python[Python]' \
+            'py[Python]' \
+            'shell[Shell]' \
+            'sh[Shell]' \
+            'sql[SQL]' \
+            'c[C]'
+
+        ;;
     config)
         _poly_list_bunfig_toml
 
@@ -716,15 +727,41 @@ _poly_test_completion() {
 
 }
 
-_bun() {
-    zstyle ':completion:*:*:bun:*' group-name ''
-    zstyle ':completion:*:*:bun-grouped:*' group-name ''
+_poly_completions_completion() {
+    _arguments -s -C \
+        '--dir=[Install into an existing directory]:directory:_directories' \
+        '1:action or shell:->completion-action' \
+        '2:shell:->completion-shell' &&
+        ret=0
 
-    zstyle ':completion:*:*:bun::descriptions' format '%F{green}-- %d --%f'
-    zstyle ':completion:*:*:bun-grouped:*' format '%F{green}-- %d --%f'
+    case $state in
+    completion-action)
+        _values 'action or shell' \
+            'bash[Generate Bash completions]' \
+            'zsh[Generate Zsh completions]' \
+            'fish[Generate Fish completions]' \
+            'install[Install completions]'
+        ;;
+    completion-shell)
+        if [[ $line[1] == install ]]; then
+            _values 'shell' \
+                'bash[Install Bash completions]' \
+                'zsh[Install Zsh completions]' \
+                'fish[Install Fish completions]'
+        fi
+        ;;
+    esac
+}
+
+_poly() {
+    zstyle ':completion:*:*:poly:*' group-name ''
+    zstyle ':completion:*:*:poly-grouped:*' group-name ''
+
+    zstyle ':completion:*:*:poly::descriptions' format '%F{green}-- %d --%f'
+    zstyle ':completion:*:*:poly-grouped:*' format '%F{green}-- %d --%f'
     # zstyle ':completion:*:options' list-colors '=^(-- *)=34'
 
-    local program=bun
+    local program=poly
     typeset -A opt_args
     local curcontext="$curcontext" state line context
 
@@ -737,29 +774,40 @@ _bun() {
     case $state in
     cmd)
         local -a scripts_list
-        IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
+        IFS=$'\n' scripts_list=($(SHELL=zsh poly getcompletes i))
         scripts="scripts:scripts:compadd -a scripts_list"
         local -a files_list
-        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
+        IFS=$'\n' files_list=($(SHELL=zsh poly getcompletes j))
 
         main_commands=(
-            'run\:"Run JavaScript with Bun, a package.json script, or a bin" '
-            'test\:"Run unit tests with Bun" '
+            'add\:"Add a dependency to package.json" '
+            'audit\:"Check installed packages for security vulnerabilities" '
+            'build\:"Bundle TypeScript and JavaScript" '
+            'ci\:"Install dependencies from a frozen lockfile" '
+            'completions\:"Generate or install shell completions" '
+            'create\:"Create a new project from a template" '
+            'exec\:"Execute a shell command" '
+            'feedback\:"Open the Poly feedback form" '
+            'help\:"Show help for a command" '
+            'info\:"Display package metadata" '
+            'init\:"Initialize a Poly project" '
+            'install\:"Install dependencies from package.json" '
+            'link\:"Register or link a local npm package" '
+            'outdated\:"Display outdated dependencies" '
+            'patch\:"Prepare a dependency for patching" '
+            'patch-commit\:"Save changes to a patched dependency" '
+            'pm\:"Run package manager utilities" '
+            'poly\:"Bundle TypeScript and JavaScript" '
+            'publish\:"Publish a package to npm" '
+            'remove\:"Remove a dependency from package.json" '
+            'repl\:"Start a Poly REPL session" '
+            'run\:"Run JavaScript, a package.json script, or a package binary" '
+            'test\:"Run unit tests" '
+            'unlink\:"Unregister a local npm package" '
+            'update\:"Update dependencies and package.json" '
+            'upgrade\:"Upgrade Poly" '
+            'why\:"Explain why a package is installed" '
             'x\:"Install and execute a package bin  (polyx)" '
-            'repl\:"Start a REPL session with Bun" '
-            'init\:"Start an empty Bun project from a blank template" '
-            'create\:"Create a new project from a template (bun c)" '
-            'install\:"Install dependencies for a package.json (bun i)" '
-            'add\:"Add a dependency to package.json (bun a)" '
-            'remove\:"Remove a dependency from package.json (bun rm)" '
-            'update\:"Update outdated dependencies & save to package.json" '
-            'outdated\:"Display the latest versions of outdated dependencies" '
-            'link\:"Link an npm package globally" '
-            'unlink\:"Globally unlink an npm package" '
-            'pm\:"More commands for managing packages" '
-            'build\:"Bundle TypeScript & JavaScript into a single file" '
-            'upgrade\:"Get the latest version of bun" '
-            'help\:"Show all supported flags and commands" '
         )
         main_commands=($main_commands)
         _alternative "$scripts" "args:command:(($main_commands))" "files:files:compadd -a files_list"
@@ -779,7 +827,7 @@ _bun() {
             _poly_link_completion
 
             ;;
-        bun)
+        poly)
             _poly_poly_completion
 
             ;;
@@ -789,6 +837,10 @@ _bun() {
             ;;
         create|c)
             _poly_create_completion
+
+            ;;
+        completions)
+            _poly_completions_completion
 
             ;;
         x)
@@ -848,7 +900,7 @@ _bun() {
 
             case $state in
             cmd2)
-                curcontext="${curcontext%:*:*}:bun-grouped"
+                curcontext="${curcontext%:*:*}:poly-grouped"
                 _alternative "args:command:(($main_commands))"
 
                 ;;
@@ -866,7 +918,7 @@ _bun() {
                     _poly_link_completion
 
                     ;;
-                bun)
+                poly)
                     _poly_poly_completion
 
                     ;;
@@ -876,6 +928,10 @@ _bun() {
                     ;;
                 create)
                     _poly_create_completion
+
+                    ;;
+                completions)
+                    _poly_completions_completion
 
                     ;;
                 x)
@@ -944,8 +1000,8 @@ _poly_list_bunfig_toml() {
 
 _poly_run_param_script_completion() {
     local -a scripts_list bins
-    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
+    IFS=$'\n' scripts_list=($(SHELL=zsh poly getcompletes s))
+    IFS=$'\n' bins=($(SHELL=zsh poly getcompletes b))
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
@@ -968,7 +1024,7 @@ _poly_remove_param_package_completion() {
         return
     fi
 
-    # TODO: move to "bun getcompletes"
+    # TODO: move to "poly getcompletes"
     if [ -f "package.json" ]; then
         local -a dependencies dev_dependencies
         IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
@@ -990,9 +1046,9 @@ _set_remove() {
 
 _poly_add_param_package_completion() {
 
-    IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
+    IFS=$'\n' inexact=($(history -n poly | grep -E "^poly add " | cut -c 10- | uniq))
     IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
-    IFS=$'\n' packages=($(SHELL=zsh bun getcompletes a $words[$CURRENT]))
+    IFS=$'\n' packages=($(SHELL=zsh poly getcompletes a $words[$CURRENT]))
 
     to_print=$inexact
     if [ ! -z "$exact" -a "$exact" != " " ]; then
@@ -1038,4 +1094,4 @@ if ! command -v compinit >/dev/null; then
     autoload -U compinit && compinit
 fi
 
-compdef _bun bun
+compdef _poly poly

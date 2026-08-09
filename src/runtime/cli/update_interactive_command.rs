@@ -245,7 +245,7 @@ impl UpdateInteractiveCommand {
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
-            "<r><b>bun update --interactive <r><d>v{}<r>",
+            "<r><b>poly update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
         );
         Output::flush();
@@ -262,10 +262,10 @@ impl UpdateInteractiveCommand {
                 .unwrap_or(false)
         {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+                "<r><red>error<r>: <b>poly update --interactive<r> requires an interactive terminal."
             );
             bun_core::note!(
-                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+                "Use <cyan>poly update<r> to update non-interactively, or <cyan>poly outdated<r> to list available updates."
             );
             Output::flush();
             Global::exit(1);
@@ -282,7 +282,7 @@ impl UpdateInteractiveCommand {
                     if err == bun_install::Error::MissingPackageJSON {
                         Output::err_generic("missing package.json, nothing outdated", ());
                     }
-                    Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
+                    Output::err_generic("failed to initialize poly install: {s}", (err.name(),));
                 }
                 Global::crash();
             }

@@ -16,7 +16,7 @@ impl ScanCommand {
             bun_core::pretty_errorln!("<r><red>error<r>: no security scanner configured");
             bun_core::pretty!(
                 "\n\
-                 To use 'bun pm scan', configure a security scanner in bunfig.toml:\n  \
+                 To use 'poly pm scan', configure a security scanner in bunfig.toml:\n  \
                  [install.security]\n  \
                  scanner = \"<cyan>package_name<r>\"\n\
                  \n\
@@ -26,7 +26,7 @@ impl ScanCommand {
         }
 
         bun_core::pretty_error!(
-            "<r><b>bun pm scan <r><d>v{}<r>\n",
+            "<r><b>poly pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -50,7 +50,7 @@ impl ScanCommand {
             ) {
                 LoadResult::NotFound => {
                     Output::err_generic(
-                        "Lockfile not found. Run 'bun install' first to generate a lockfile.",
+                        "Lockfile not found. Run 'poly install' first to generate a lockfile.",
                         (),
                     );
                     Global::exit(1);

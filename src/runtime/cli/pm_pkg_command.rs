@@ -85,7 +85,7 @@ impl PmPkgCommand {
         Output::prettyln(format_args!(
             "{}",
             const_format::concatcp!(
-                "<r><b>bun pm pkg<r> <d>v",
+                "<r><b>poly pm pkg<r> <d>v",
                 Global::package_json_version_with_sha,
                 "<r>"
             )
@@ -109,7 +109,7 @@ impl PmPkgCommand {
   <d>$<r> <b><green>poly pm pkg<r> <cyan>delete<r> <blue>scripts.test devDependencies.webpack<r>
   <d>$<r> <b><green>poly pm pkg<r> <cyan>fix<r>
 
-<b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
+<b>More info<r>: <magenta>https://github.com/liooil/poly<r>
 "#;
         #[allow(clippy::disallowed_methods)]
         // help-text const contains <tag> markup and literal JSON braces
@@ -280,7 +280,7 @@ impl PmPkgCommand {
     ) -> Result<(), Error> {
         if args.is_empty() {
             Output::err_generic(
-                "<blue>bun pm pkg set<r> expects a key=value pair of args",
+                "<blue>poly pm pkg set<r> expects a key=value pair of args",
                 (),
             );
             Global::exit(1);
@@ -338,7 +338,7 @@ impl PmPkgCommand {
         cwd: &[u8],
     ) -> Result<(), Error> {
         if args.is_empty() {
-            Output::err_generic("<blue>bun pm pkg <b>delete<r> expects key args", ());
+            Output::err_generic("<blue>poly pm pkg <b>delete<r> expects key args", ());
             Global::exit(1);
         }
 

@@ -76,12 +76,14 @@ impl Options {
     /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
     ///
     /// ## Exits
+    /// - `--help` or `-h` is passed before the target package. Prints usage and exits successfully.
     /// - `--revision` or `--version` flags are passed without a target
     ///   command also being provided. This is not a failure.
     /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
     fn parse(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
         let mut found_subcommand_name = false;
         let mut maybe_package_name: Option<&'static [u8]> = None;
+        let mut has_help = false;
         let mut has_version = false; //  --version
         let mut has_revision = false; // --revision
         let mut i: usize = 0;
@@ -103,7 +105,9 @@ impl Options {
             }
 
             if !positional.is_empty() && positional[0] == b'-' {
-                if positional == b"--version" || positional == b"-v" {
+                if positional == b"--help" || positional == b"-h" {
+                    has_help = true;
+                } else if positional == b"--version" || positional == b"-v" {
                     has_version = true;
                 } else if positional == b"--revision" {
                     has_revision = true;
@@ -160,6 +164,11 @@ impl Options {
             }
 
             i += 1;
+        }
+
+        if has_help {
+            crate::cli::command::tag_print_help(Command::Tag::BunxCommand, true);
+            Global::exit(0);
         }
 
         // Handle --package flag case differently

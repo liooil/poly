@@ -498,11 +498,71 @@ where
 
 #[cold]
 #[inline(never)]
+fn value_display_width(param: &Param<Help>) -> usize {
+    if param.takes_value == Values::None {
+        return 0;
+    }
+
+    let value = if param.id.value.is_empty() {
+        b"val" as &[u8]
+    } else {
+        param.id.value
+    };
+    let repeat_suffix_len = if param.takes_value == Values::Many {
+        3
+    } else {
+        0
+    };
+    let optional_suffix_len = if param.takes_value == Values::OneOptional {
+        1
+    } else {
+        0
+    };
+    3 + value.len() + repeat_suffix_len + optional_suffix_len
+}
+
+#[cold]
+#[inline(never)]
+fn long_names_display_width(param: &Param<Help>) -> usize {
+    let Some(long) = param.names.long else {
+        return 0;
+    };
+
+    let mut width = 2 + long.len();
+    for alias in param.names.long_aliases {
+        width += 3 + alias.len();
+    }
+    width
+}
+
+#[cold]
+#[inline(never)]
+fn simple_print_value(param: &Param<Help>) {
+    if param.takes_value == Values::None {
+        return;
+    }
+
+    let value = if param.id.value.is_empty() {
+        b"val" as &[u8]
+    } else {
+        param.id.value
+    };
+    bun_core::pretty!("<d><cyan>=\\<{}\\><r>", bstr::BStr::new(value));
+    if param.takes_value == Values::Many {
+        bun_core::pretty!("<d><cyan>...<r>");
+    } else if param.takes_value == Values::OneOptional {
+        bun_core::pretty!("<d><cyan>?<r>");
+    }
+}
+
+#[cold]
+#[inline(never)]
 pub(crate) fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
     bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
-            bun_core::pretty!("  <cyan>-{}<r><d><cyan>=\\<val\\><r>", s as char);
+            bun_core::pretty!("  <cyan>-{}<r>", s as char);
+            simple_print_value(param);
         } else {
             bun_core::pretty!("  <cyan>-{}<r>", s as char);
         }
@@ -517,9 +577,16 @@ pub(crate) fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
         }
 
         if param.takes_value != Values::None {
-            bun_core::pretty!("<cyan>--{}<r><d><cyan>=\\<val\\><r>", bstr::BStr::new(l));
+            bun_core::pretty!("<cyan>--{}<r>", bstr::BStr::new(l));
+            for alias in param.names.long_aliases {
+                bun_core::pretty!("<d>/</r><cyan>--{}<r>", bstr::BStr::new(alias));
+            }
+            simple_print_value(param);
         } else {
             bun_core::pretty!("<cyan>--{}<r>", bstr::BStr::new(l));
+            for alias in param.names.long_aliases {
+                bun_core::pretty!("<d>/</r><cyan>--{}<r>", bstr::BStr::new(alias));
+            }
         }
     } else {
         bun_core::pretty!("    ");
@@ -527,19 +594,21 @@ pub(crate) fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
     Ok(())
 }
 
-/// Display width of a single param's flag column: `--long` plus the literal
-/// `=<val>` suffix (6 bytes) when it takes a value. Kept in lockstep with
-/// `simple_print_param`'s `"=<val>"` literal — change both together.
+/// Display width of a single param's flag column. Kept in lockstep with
+/// `simple_print_param`.
 #[cold]
 #[inline(never)]
 fn param_display_width(param: &Param<Help>) -> usize {
-    let flags_len = param.names.long.map_or(0, |l| l.len());
-    let value_len: usize = if param.takes_value != Values::None {
-        6
+    let mut width = 4;
+    if param.names.short.is_some() && param.names.long.is_none() {
+        width += value_display_width(param);
+    }
+    if param.names.long.is_some() {
+        width += 2 + long_names_display_width(param) + value_display_width(param);
     } else {
-        0
-    };
-    flags_len + value_len
+        width += 4;
+    }
+    width
 }
 
 #[cold]
@@ -559,51 +628,66 @@ fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
 
 #[cold]
 #[inline(never)]
+fn simple_help_param(param: &Param<Help>, max_spacing: usize) {
+    if param.names.short.is_none() && param.names.long.is_none() {
+        return;
+    }
+
+    let desc_text = get_help_simple(param);
+    if desc_text.is_empty() {
+        return;
+    }
+
+    let total_len = param_display_width(param);
+    let num_spaces_after = max_spacing - total_len;
+    let spaces_after = vec![b' '; num_spaces_after];
+
+    simple_print_param(param).expect("unreachable");
+    // `pretty_help_desc` resolves the `<tag>` markup
+    // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
+    // tag-clean regardless of which helper a command uses.
+    let desc = pretty_help_desc(param);
+    bun_core::pretty!(
+        "  {}  {}",
+        bstr::BStr::new(&spaces_after),
+        bstr::BStr::new(desc.as_ref()),
+    );
+}
+
+#[cold]
+#[inline(never)]
 pub fn simple_help(params: &[Param<Help>]) {
     let max_spacing: usize = compute_max_help_spacing(params);
 
     for param in params {
-        if param.names.short.is_none() && param.names.long.is_none() {
-            continue;
+        simple_help_param(param, max_spacing);
+    }
+}
+
+#[cold]
+#[inline(never)]
+pub fn simple_help_for_long_names(params: &[Param<Help>], long_names: &[&[u8]]) {
+    let find_param = |name: &[u8]| params.iter().find(|param| param.names.matches_long(name));
+
+    let mut max_spacing = 2;
+    for name in long_names {
+        let param = find_param(name).expect("help parameter must exist");
+        if !get_help_simple(param).is_empty() {
+            max_spacing = max_spacing.max(param_display_width(param));
         }
+    }
 
-        let desc_text = get_help_simple(param);
-        if desc_text.is_empty() {
-            continue;
-        }
-
-        // create a string with spaces_len spaces
-        let total_len = param_display_width(param);
-        let num_spaces_after = max_spacing - total_len;
-        let spaces_after = vec![b' '; num_spaces_after];
-
-        simple_print_param(param).expect("unreachable");
-        // `pretty_help_desc` resolves the `<tag>` markup
-        // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
-        // tag-clean regardless of which helper a command uses.
-        let desc = pretty_help_desc(param);
-        bun_core::pretty!(
-            "  {}  {}",
-            bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(desc.as_ref()),
-        );
+    for name in long_names {
+        let param = find_param(name).expect("help parameter must exist");
+        simple_help_param(param, max_spacing);
     }
 }
 
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
-    // `computed_max_spacing` is not const-evaluable over a
-    // slice param, so the overflow check is a runtime debug_assert below.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
-
-    let computed_max_spacing: usize = compute_max_help_spacing(params);
-
-    debug_assert!(
-        computed_max_spacing <= MAX_SPACING,
-        "a parameter is too long to be nicely printed in `bun --help`"
-    );
 
     for param in params {
         if !(param.names.short.is_none() && param.names.long.is_none()) {
@@ -612,16 +696,23 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 simple_print_param(param).expect("unreachable");
 
                 let total_len = param_display_width(param);
-                let num_spaces_after = MAX_SPACING - total_len;
 
                 // `pretty_help_desc`
                 // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
-                bun_core::pretty!(
-                    "{}{}",
-                    bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
-                    bstr::BStr::new(desc.as_ref()),
-                );
+                if total_len >= MAX_SPACING {
+                    bun_core::pretty!(
+                        "\n{}{}",
+                        bstr::BStr::new(SPACE_BUF),
+                        bstr::BStr::new(desc.as_ref()),
+                    );
+                } else {
+                    bun_core::pretty!(
+                        "{}{}",
+                        bstr::BStr::new(&SPACE_BUF[0..MAX_SPACING - total_len]),
+                        bstr::BStr::new(desc.as_ref()),
+                    );
+                }
             }
         }
     }

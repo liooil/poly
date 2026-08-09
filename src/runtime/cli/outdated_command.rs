@@ -57,7 +57,7 @@ impl<'a> FilterType<'a> {
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
-            "<r><b>bun outdated <r><d>v{}<r>",
+            "<r><b>poly outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -73,7 +73,10 @@ impl OutdatedCommand {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
-                        Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
+                        Output::err_generic(
+                            "failed to initialize poly install: {s}",
+                            (err.name(),),
+                        );
                     }
                     Global::crash();
                 }

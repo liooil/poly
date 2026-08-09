@@ -41,7 +41,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(
-            "<r><b>bun unlink <r><d>v{}<r>\n",
+            "<r><b>poly unlink <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
         );
         Output::flush();
@@ -233,7 +233,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         );
         Global::exit(0);
     } else {
-        bun_core::prettyln!("<r><red>error:<r> bun unlink {{packageName}} not implemented yet");
+        bun_core::prettyln!("<r><red>error:<r> poly unlink {{packageName}} not implemented yet");
         Global::crash();
     }
 }

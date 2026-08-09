@@ -122,16 +122,16 @@ function parseCliArgs(argv: string[]): ParsedArgs {
 }
 
 function printHelp() {
-  const heading = `${bold}${cyan}bun feedback${reset}`;
+  const heading = `${bold}${cyan}poly feedback${reset}`;
   const usage = `${bold}Usage${reset}
-  bun feedback [options] [feedback text ... | files ...]`;
+  poly feedback [options] [feedback text ... | files ...]`;
   const options = `${bold}Options${reset}
   ${cyan}-e${reset}, ${cyan}--email${reset} <email>   Set the email address used for this submission
   ${cyan}-h${reset}, ${cyan}--help${reset}            Show this help message and exit`;
   const examples = `${bold}Examples${reset}
-  bun feedback "Love the new release!"
-  bun feedback report.txt details.log
-  echo "please document X" | bun feedback --email you@example.com`;
+  poly feedback "Love the new release!"
+  poly feedback report.txt details.log
+  echo "please document X" | poly feedback --email you@example.com`;
 
   console.log([heading, "", usage, "", options, "", examples].join("\n"));
 }

@@ -1,17 +1,16 @@
 //! CLI Arguments for:
 //!
-//! - bun install
-//! - bun update
-//! - bun patch
-//! - bun patch-commit
-//! - bun pm
-//! - bun add
-//! - bun remove
-//! - bun link
-//! - bun audit
+//! - poly install
+//! - poly update
+//! - poly patch
+//! - poly patch-commit
+//! - poly pm
+//! - poly add
+//! - poly remove
+//! - poly link
+//! - poly audit
 
 use crate::package_install;
-use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
 use bun_clap as clap;
 use bun_core::strings;
@@ -23,16 +22,10 @@ use std::sync::OnceLock;
 
 use super::package_manager_options as Options;
 
-/// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The help strings are runtime `&str`s so we
-/// use the runtime expander.
+/// Runtime `<tag>` to ANSI rewrite of a help-text literal, then write to stdout.
 #[inline]
-#[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
-    Output::pretty(format_args!(
-        "{}",
-        Output::pretty_fmt_rt(text, Output::enable_ansi_colors_stdout())
-    ));
+    Output::pretty(text);
 }
 
 type ParamType = clap::Param<clap::Help>;
@@ -280,7 +273,7 @@ const AUDIT_PARAMS: &[ParamType] = &[
     ),
     clap::param!("--json                                 Output in JSON format"),
     clap::param!(
-        "--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)"
+        "--audit-level <STR>                    Only print advisories at or above the selected severity (low, moderate, high, critical)"
     ),
     clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
 ];
@@ -429,7 +422,7 @@ pub struct CommandLineArguments {
     pub top_only: bool,
     pub(crate) depth: Option<usize>,
 
-    // `bun audit` options
+    // `poly audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
@@ -568,7 +561,7 @@ pub struct Omit {
 impl CommandLineArguments {
     pub fn print_help(subcommand: Subcommand) {
         // the output of --help uses the following syntax highlighting
-        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+        // template: <b>Usage<r>: <b><green>poly <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
         // use <bar> to emphasize 'bar'
 
@@ -576,8 +569,8 @@ impl CommandLineArguments {
             // fall back to HelpCommand.printWithReason
             Subcommand::Install => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
-<b>Alias<r>: <b><green>bun i<r>
+<b>Usage<r>: <b><green>poly install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
+<b>Alias<r>: <b><green>poly i<r>
 
   Install the dependencies listed in package.json.
 
@@ -586,12 +579,12 @@ impl CommandLineArguments {
 
 <b>Examples:<r>
   <d>Install the dependencies for the current project<r>
-  <b><green>bun install<r>
+  <b><green>poly install<r>
 
   <d>Skip devDependencies<r>
-  <b><green>bun install<r> <cyan>--production<r>
+  <b><green>poly install<r> <cyan>--production<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
                 pretty_help(intro_text);
                 clap::simple_help(INSTALL_PARAMS);
@@ -600,7 +593,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
             }
             Subcommand::Update => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
+<b>Usage<r>: <b><green>poly update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
 
   Update dependencies to their most recent versions within the version range in package.json.
 
@@ -609,18 +602,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
 <b>Examples:<r>
   <d>Update all dependencies:<r>
-  <b><green>bun update<r>
+  <b><green>poly update<r>
 
   <d>Update all dependencies to latest:<r>
-  <b><green>bun update<r> <cyan>--latest<r>
+  <b><green>poly update<r> <cyan>--latest<r>
 
   <d>Interactive update (select packages to update):<r>
-  <b><green>bun update<r> <cyan>-i<r>
+  <b><green>poly update<r> <cyan>-i<r>
 
   <d>Update specific packages:<r>
-  <b><green>bun update<r> <blue>zod jquery@3<r>
+  <b><green>poly update<r> <blue>zod jquery@3<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
                 pretty_help(intro_text);
                 clap::simple_help(UPDATE_PARAMS);
@@ -629,7 +622,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
             }
             Subcommand::Patch => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
+<b>Usage<r>: <b><green>poly patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
 
   Prepare a package for patching, or generate and save a patch.
 
@@ -639,15 +632,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 
 <b>Examples:<r>
   <d>Prepare jquery for patching<r>
-  <b><green>bun patch jquery<r>
+  <b><green>poly patch jquery<r>
 
   <d>Generate a patch file for changes made to jquery<r>
-  <b><green>bun patch --commit 'node_modules/jquery'<r>
+  <b><green>poly patch --commit 'node_modules/jquery'<r>
 
   <d>Generate a patch file in a custom directory for changes made to jquery<r>
-  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
+  <b><green>poly patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -657,21 +650,21 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
             }
             Subcommand::PatchCommit => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
+<b>Usage<r>: <b><green>poly patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
 
-  Generate a patch out of a directory and save it. This is equivalent to <b><green>bun patch --commit<r>.
+  Generate a patch out of a directory and save it. This is equivalent to <b><green>poly patch --commit<r>.
 
 <b>Flags:<r>";
                 let outro_text = r#"
 
 <b>Examples:<r>
   <d>Generate a patch in the default "./patches" directory for changes in "./node_modules/jquery"<r>
-  <b><green>bun patch-commit 'node_modules/jquery'<r>
+  <b><green>poly patch-commit 'node_modules/jquery'<r>
 
   <d>Generate a patch in a custom directory ("./my-patches")<r>
-  <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
+  <b><green>poly patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 "#;
                 pretty_help(intro_text);
                 clap::simple_help(PATCH_COMMIT_PARAMS);
@@ -679,12 +672,60 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
                 Output::flush();
             }
             Subcommand::Pm => {
-                PackageManagerCommand::print_help();
+                let intro_text = r"
+<b>Usage<r>: <b><green>poly pm<r> <cyan>[flags]<r> <blue>[\<command\>]<r>
+
+  Run package manager utilities.
+";
+                let outro_text = r"
+
+<b>Commands:<r>
+
+  <b><green>poly pm<r> <blue>scan<r>                scan all packages in lockfile for security vulnerabilities
+  <b><green>poly pm<r> <blue>pack<r>                create a tarball of the current workspace
+  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
+  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
+  <d>├<r> <cyan>--filename<r>                the name of the tarball
+  <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts
+  <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)
+  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
+  <b><green>poly pm<r> <blue>bin<r>                 print the path to bin folder
+  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
+  <b><green>poly<r> <blue>list<r>                   list the dependency tree according to the current lockfile
+  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
+  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <b><green>poly pm<r> <blue>why<r> <d>\<pkg\><r>           show dependency tree explaining why a package is installed
+  <b><green>poly pm<r> <blue>whoami<r>              print the current npm username
+  <b><green>poly pm<r> <blue>view<r> <d>name[@version]<r> view package metadata from the registry <d>(use `poly info` instead)<r>
+  <b><green>poly pm<r> <blue>version<r> <d>[increment]<r> bump the version in package.json and create a git tag
+  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
+  <b><green>poly pm<r> <blue>pkg<r>                 manage data in package.json
+  <d>├<r> <cyan>get<r> <d>[key ...]<r>
+  <d>├<r> <cyan>set<r> <d>key=value ...<r>
+  <d>├<r> <cyan>delete<r> <d>key ...<r>
+  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
+  <b><green>poly pm<r> <blue>hash<r>                generate & print the hash of the current lockfile
+  <b><green>poly pm<r> <blue>hash-string<r>         print the string used to hash the lockfile
+  <b><green>poly pm<r> <blue>hash-print<r>          print the hash stored in the current lockfile
+  <b><green>poly pm<r> <blue>cache<r>               print the path to the cache folder
+  <b><green>poly pm<r> <blue>cache rm<r>            clear the cache
+  <b><green>poly pm<r> <blue>migrate<r>             migrate another package manager's lockfile without installing anything
+  <b><green>poly pm<r> <blue>untrusted<r>           print current untrusted dependencies with scripts
+  <b><green>poly pm<r> <blue>trust<r> <d>names ...<r>     run scripts for untrusted dependencies and add to `trustedDependencies`
+  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
+  <b><green>poly pm<r> <blue>default-trusted<r>     print the default trusted dependencies list
+
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
+";
+
+                pretty_help(intro_text);
+                pretty_help(outro_text);
+                Output::flush();
             }
             Subcommand::Add => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
-<b>Alias<r>: <b><green>bun a<r>
+<b>Usage<r>: <b><green>poly add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
+<b>Alias<r>: <b><green>poly a<r>
 
   Add a new dependency to package.json and install it.
 
@@ -693,16 +734,16 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 
 <b>Examples:<r>
   <d>Add a dependency from the npm registry<r>
-  <b><green>bun add<r> <blue>zod<r>
-  <b><green>bun add<r> <blue>zod@next<r>
-  <b><green>bun add<r> <blue>zod@3.0.0<r>
+  <b><green>poly add<r> <blue>zod<r>
+  <b><green>poly add<r> <blue>zod@next<r>
+  <b><green>poly add<r> <blue>zod@3.0.0<r>
 
   <d>Add a dev, optional, or peer dependency <r>
-  <b><green>bun add<r> <cyan>-d<r> <blue>typescript<r>
-  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
-  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
+  <b><green>poly add<r> <cyan>-d<r> <blue>typescript<r>
+  <b><green>poly add<r> <cyan>--optional<r> <blue>lodash<r>
+  <b><green>poly add<r> <cyan>--peer<r> <blue>esbuild<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
                 pretty_help(intro_text);
                 clap::simple_help(ADD_PARAMS);
@@ -711,8 +752,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
             }
             Subcommand::Remove => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
-<b>Alias<r>: <b><green>bun r<r>
+<b>Usage<r>: <b><green>poly remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
+<b>Alias<r>: <b><green>poly r<r>
 
   Remove a package from package.json and uninstall from node_modules.
 
@@ -721,9 +762,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 
 <b>Examples:<r>
   <d>Remove a dependency<r>
-  <b><green>bun remove<r> <blue>ts-node<r>
+  <b><green>poly remove<r> <blue>ts-node<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
                 pretty_help(intro_text);
                 clap::simple_help(REMOVE_PARAMS);
@@ -732,7 +773,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
             }
             Subcommand::Link => {
                 let intro_text = r#"
-<b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
+<b>Usage<r>: <b><green>poly link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
 
   Register a local directory as a "linkable" package, or link a "linkable" package to the current project.
 
@@ -742,12 +783,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 <b>Examples:<r>
   <d>Register the current directory as a linkable package.<r>
   <d>Directory should contain a package.json.<r>
-  <b><green>bun link<r>
+  <b><green>poly link<r>
 
   <d>Add a previously-registered linkable package as a dependency of the current project.<r>
-  <b><green>bun link<r> <blue>\<package\><r>
+  <b><green>poly link<r> <blue>\<package\><r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
                 pretty_help(intro_text);
                 clap::simple_help(LINK_PARAMS);
@@ -756,7 +797,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
             }
             Subcommand::Unlink => {
                 let intro_text = r#"
-<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>poly unlink<r> <cyan>[flags]<r>
 
   Unregister the current directory as a "linkable" package.
 
@@ -766,9 +807,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 
 <b>Examples:<r>
   <d>Unregister the current directory as a linkable package.<r>
-  <b><green>bun unlink<r>
+  <b><green>poly unlink<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -778,7 +819,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
             }
             Subcommand::Outdated => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
+<b>Usage<r>: <b><green>poly outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
 
   Display outdated dependencies for each matching workspace.
 
@@ -788,19 +829,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 
 <b>Examples:<r>
   <d>Display outdated dependencies in the current workspace.<r>
-  <b><green>bun outdated<r>
+  <b><green>poly outdated<r>
 
   <d>Use --filter to include more than one workspace.<r>
-  <b><green>bun outdated<r> <cyan>--filter="*"<r>
-  <b><green>bun outdated<r> <cyan>--filter="./app/*"<r>
-  <b><green>bun outdated<r> <cyan>--filter="!frontend"<r>
+  <b><green>poly outdated<r> <cyan>--filter="*"<r>
+  <b><green>poly outdated<r> <cyan>--filter="./app/*"<r>
+  <b><green>poly outdated<r> <cyan>--filter="!frontend"<r>
 
   <d>Filter dependencies with name patterns.<r>
-  <b><green>bun outdated<r> <blue>jquery<r>
-  <b><green>bun outdated<r> <blue>"is-*"<r>
-  <b><green>bun outdated<r> <blue>"!is-even"<r>
+  <b><green>poly outdated<r> <blue>jquery<r>
+  <b><green>poly outdated<r> <blue>"is-*"<r>
+  <b><green>poly outdated<r> <blue>"!is-even"<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 "#;
 
                 pretty_help(intro_text);
@@ -810,7 +851,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
             }
             Subcommand::Pack => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun pm pack<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>poly pm pack<r> <cyan>[flags]<r>
 
   Create a tarball for the current project.
 
@@ -819,9 +860,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
                 let outro_text = r"
 
 <b>Examples:<r>
-  <b><green>bun pm pack<r>
+  <b><green>poly pm pack<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -831,7 +872,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
             }
             Subcommand::Publish => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
+<b>Usage<r>: <b><green>poly publish<r> <cyan>[flags]<r> <blue>[dist]<r>
 
   Publish a package to the npm registry.
 
@@ -841,18 +882,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 
 <b>Examples:<r>
   <d>Display files that would be published, without publishing to the registry.<r>
-  <b><green>bun publish<r> <cyan>--dry-run<r>
+  <b><green>poly publish<r> <cyan>--dry-run<r>
 
   <d>Publish the current package with public access.<r>
-  <b><green>bun publish<r> <cyan>--access public<r>
+  <b><green>poly publish<r> <cyan>--access public<r>
 
   <d>Publish a pre-existing package tarball with tag 'next'.<r>
-  <b><green>bun publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
+  <b><green>poly publish<r> <cyan>--tag next<r> <blue>./path/to/tarball.tgz<r>
 
   <d>Publish without failing when republishing over an existing version.<r>
-  <b><green>bun publish<r> <cyan>--tolerate-republish<r>
+  <b><green>poly publish<r> <cyan>--tolerate-republish<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -862,7 +903,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
             }
             Subcommand::Audit => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun audit<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>poly audit<r> <cyan>[flags]<r>
 
   Check installed packages for vulnerabilities.
 
@@ -872,12 +913,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 
 <b>Examples:<r>
   <d>Check the current project's packages for vulnerabilities.<r>
-  <b><green>bun audit<r>
+  <b><green>poly audit<r>
 
   <d>Output package vulnerabilities in JSON format.<r>
-  <b><green>bun audit --json<r>
+  <b><green>poly audit --json<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/install/audit<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -887,7 +928,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
             }
             Subcommand::Info => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
+<b>Usage<r>: <b><green>poly info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
 
   View package metadata from the registry.
 
@@ -897,15 +938,15 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 
 <b>Examples:<r>
   <d>Display metadata for the 'react' package<r>
-  <b><green>bun info<r> <blue>react<r>
+  <b><green>poly info<r> <blue>react<r>
 
   <d>Display a specific version of a package<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
+  <b><green>poly info<r> <blue>react@18.0.0<r>
 
   <d>Display a specific property in JSON format<r>
-  <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
+  <b><green>poly info<r> <blue>react<r> version <cyan>--json<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -915,7 +956,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
             }
             Subcommand::Why => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r>
+<b>Usage<r>: <b><green>poly why<r> <cyan>[flags]<r> <blue>\<package\><r>
 
   Explain why a package is installed.
 
@@ -924,11 +965,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
                 let outro_text = r#"
 
 <b>Examples:<r>
-  <d>$<r> <b><green>bun why<r> <blue>react<r>
-  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
-  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+  <d>$<r> <b><green>poly why<r> <blue>react<r>
+  <d>$<r> <b><green>poly why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
+  <d>$<r> <b><green>poly why<r> <blue>"*-lodash"<r> <cyan>--top<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 "#;
 
                 pretty_help(intro_text);
@@ -938,7 +979,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
             }
             Subcommand::Scan => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun pm scan<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>poly pm scan<r> <cyan>[flags]<r>
 
   Scan all packages in lockfile for security vulnerabilities.
 
@@ -948,12 +989,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 
 <b>Examples:<r>
   <d>Scan all packages for vulnerabilities<r>
-  <b><green>bun pm scan<r>
+  <b><green>poly pm scan<r>
 
   <d>Output results as JSON<r>
-  <b><green>bun pm scan<r> <cyan>--json<r>
+  <b><green>poly pm scan<r> <cyan>--json<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>.
 ";
 
                 pretty_help(intro_text);
@@ -961,6 +1002,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 pretty_help(outro_text);
                 Output::flush();
             }
+        }
+    }
+
+    fn help_subcommand(subcommand: Subcommand, positionals: &[&[u8]]) -> Subcommand {
+        if subcommand != Subcommand::Pm {
+            return subcommand;
+        }
+
+        let command = if positionals
+            .first()
+            .is_some_and(|arg| strings::eql_comptime(arg, b"pm"))
+        {
+            positionals.get(1)
+        } else {
+            positionals.first()
+        };
+
+        match command {
+            Some(command) if strings::eql_comptime(command, b"pack") => Subcommand::Pack,
+            Some(command) if strings::eql_comptime(command, b"scan") => Subcommand::Scan,
+            _ => subcommand,
         }
     }
 
@@ -1017,7 +1079,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         };
 
         if args.flag(b"--help") {
-            Self::print_help(subcommand);
+            Self::print_help(Self::help_subcommand(subcommand, args.positionals()));
             Global::exit(0);
         }
 
@@ -1391,25 +1453,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         if subcommand == Subcommand::Patch && cli.positionals.len() < 2 {
             if let PatchOpts::Commit { .. } = cli.patch {
                 Output::err_generic(
-                    "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch --commit <cyan>node_modules/\\<package\\><r>",
+                    "Missing path to the package directory containing your changes.\n  <d>Usage:<r> poly patch --commit <cyan>node_modules/\\<package\\><r>",
                     (),
                 );
             } else {
                 Output::err_generic(
-                    "Missing package name to patch.\n  <d>Usage:<r> bun patch <cyan>\\<package\\><r><d>[@\\<version\\>]<r>",
+                    "Missing package name to patch.\n  <d>Usage:<r> poly patch <cyan>\\<package\\><r><d>[@\\<version\\>]<r>",
                     (),
                 );
             }
-            bun_core::note!("Run 'bun patch --help' for more information");
+            bun_core::note!("Run 'poly patch --help' for more information");
             Global::crash();
         }
 
         if subcommand == Subcommand::PatchCommit && cli.positionals.len() < 2 {
             Output::err_generic(
-                "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch-commit <cyan>node_modules/\\<package\\><r>",
+                "Missing path to the package directory containing your changes.\n  <d>Usage:<r> poly patch-commit <cyan>node_modules/\\<package\\><r>",
                 (),
             );
-            bun_core::note!("Run 'bun patch-commit --help' for more information");
+            bun_core::note!("Run 'poly patch-commit --help' for more information");
             Global::crash();
         }
 

@@ -131,62 +131,7 @@ impl PackageManagerCommand {
     }
 
     pub(crate) fn print_help() {
-        // the output of --help uses the following syntax highlighting
-        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-        // use [foo] for multiple arguments or flags for foo.
-        // use <bar> to emphasize 'bar'
-
-        const INTRO_TEXT: &str = "\n\
-<b>Usage<r>: <b><green>poly pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
-\n\
-  Run package manager utilities.";
-
-        const OUTRO_TEXT: &str = "\n\
-\n\
-<b>Commands:<r>\n\
-\n\
-  <b><green>poly pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities\n\
-  <b><green>poly pm<r> <blue>pack<r>                 create a tarball of the current workspace\n\
-  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk\n\
-  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in\n\
-  <d>├<r> <cyan>--filename<r>                the name of the tarball\n\
-  <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts\n\
-  <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)\n\
-  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
-  <b><green>poly pm<r> <blue>bin<r>                  print the path to bin folder\n\
-  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
-  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
-  <b><green>poly pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
-  <b><green>poly pm<r> <blue>whoami<r>               print the current npm username\n\
-  <b><green>poly pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
-  <b><green>poly pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
-  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
-  <b><green>poly pm<r> <blue>pkg<r>                  manage data in package.json\n\
-  <d>├<r> <cyan>get<r> <d>[key ...]<r>\n\
-  <d>├<r> <cyan>set<r> <d>key=value ...<r>\n\
-  <d>├<r> <cyan>delete<r> <d>key ...<r>\n\
-  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors\n\
-  <b><green>poly pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile\n\
-  <b><green>poly pm<r> <blue>hash-string<r>          print the string used to hash the lockfile\n\
-  <b><green>poly pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
-  <b><green>poly pm<r> <blue>cache<r>                print the path to the cache folder\n\
-  <b><green>poly pm<r> <blue>cache rm<r>             clear the cache\n\
-  <b><green>poly pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
-  <b><green>poly pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
-  <b><green>poly pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
-  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
-  <b><green>poly pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
-\n\
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
-
-        #[allow(clippy::disallowed_methods)]
-        // help-text consts contain <tag> markup that must be tag-walked
-        Output::pretty(format_args!("{}", INTRO_TEXT));
-        #[allow(clippy::disallowed_methods)]
-        Output::pretty(format_args!("{}", OUTRO_TEXT));
-        Output::flush();
+        CommandLineArguments::print_help(Subcommand::Pm);
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
@@ -402,7 +347,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
                     had_err = true;
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
+                bun_core::prettyln!("Cleared 'poly install' cache");
 
                 'polyx: {
                     let tmp = Fs::RealFS::platform_temp_dir();

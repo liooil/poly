@@ -113,7 +113,7 @@ impl RunCommand {
   <b><green>poly run<r> <blue>dev<r>
   <b><green>poly run<r> <blue>lint<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
+Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
 "
         );
 

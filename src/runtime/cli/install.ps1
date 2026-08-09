@@ -247,11 +247,11 @@ function Install-Bun {
     }
     # This completions script in general will install some extra stuff, mainly the `polyx` link.
     # It also installs completions.
-    $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
+    $output = "$(& "${BunBin}\bun.exe" completions install 2>&1)"
     if ($LASTEXITCODE -ne 0) {
       Write-Output $output
       Write-Output "Install Failed - could not finalize installation"
-      Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+      Write-Output "The command '${BunBin}\bun.exe completions install' exited with code ${LASTEXITCODE}`n"
       return 1
     }
   } catch {

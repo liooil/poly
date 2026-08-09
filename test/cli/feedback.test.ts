@@ -32,14 +32,14 @@ async function runFeedback(args: string[], cwd: string) {
   // arrived or never will — race a settled sentinel instead of hanging.
   const form = await Promise.race([received, Promise.resolve(null)]);
   if (!form) {
-    throw new Error(`bun feedback exited with ${exitCode} without posting.
+    throw new Error(`poly feedback exited with ${exitCode} without posting.
 stdout: ${stdout}
 stderr: ${stderr}`);
   }
   return { stdout, stderr, exitCode, form };
 }
 
-test("bun feedback keeps a bare word that matches a file in the cwd as message text", async () => {
+test("poly feedback keeps a bare word that matches a file in the cwd as message text", async () => {
   using dir = tempDir("feedback-bare-word", {
     "crash": "this file must not be attached",
   });
@@ -54,7 +54,7 @@ test("bun feedback keeps a bare word that matches a file in the cwd as message t
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.any(String) });
 });
 
-test("bun feedback attaches an explicit path positional and lists it on stderr", async () => {
+test("poly feedback attaches an explicit path positional and lists it on stderr", async () => {
   using dir = tempDir("feedback-path-like", {
     "details.log": "log contents",
   });
