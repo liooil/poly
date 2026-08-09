@@ -114,7 +114,7 @@ Type `.help` at the prompt to see all available REPL commands.
 | ---------- | ------------------------------------------------------------------------------------------------ |
 | `.help`    | Print the help message listing commands and keybindings                                          |
 | `.exit`    | Exit the REPL                                                                                    |
-| `.clear`   | Clear the screen                                                                                 |
+| `.clear`   | Cancel pending input (`Ctrl+L` clears the screen)                                                |
 | `.copy`    | Copy the last result to the clipboard. Pass an expression to evaluate and copy it: `.copy 1 + 1` |
 | `.load`    | Load a file into the REPL session: `.load ./script.ts`                                           |
 | `.save`    | Save the current REPL history to a file: `.save ./session.txt`                                   |
@@ -137,10 +137,14 @@ The REPL supports Emacs-style line editing.
 | `Ctrl+U`            | Delete to start of line                                  |
 | `Ctrl+K`            | Delete to end of line                                    |
 | `Ctrl+W`            | Delete word backward                                     |
+| `Alt+D`             | Delete word forward                                      |
+| `Ctrl+Y`            | Yank the most recently deleted text                      |
 | `Ctrl+D`            | Delete character (or exit if line is empty)              |
 | `Ctrl+L`            | Clear screen                                             |
 | `Ctrl+T`            | Swap the two characters before the cursor                |
-| `Up` / `Down`       | Navigate history                                         |
+| `Ctrl+R` / `Ctrl+S` | Search history backward/forward                          |
+| `Up` / `Down`       | Navigate history entries matching the current prefix     |
+| `Alt+Enter`         | Insert a newline without evaluating                      |
 | `Tab`               | Auto-complete                                            |
 | `Ctrl+C`            | Cancel current input (press twice on empty line to exit) |
 
@@ -148,7 +152,7 @@ The REPL supports Emacs-style line editing.
 
 ## History
 
-REPL history is automatically saved to `~/.bun_repl_history` (up to 1000 entries) and loaded at the start of each session. Use `Up`/`Down` to navigate.
+REPL history is automatically saved to `~/.bun_repl_history` (up to 1000 entries) and loaded at the start of each session. Set `NODE_REPL_HISTORY` to use another path (or to an empty value to disable persistence), and `NODE_REPL_HISTORY_SIZE` to change the maximum number of entries.
 
 To export your history to a different file, use `.save`:
 

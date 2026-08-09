@@ -87,19 +87,23 @@
 ## 统一交互式 REPL
 
 任何新增的通用语言或内置领域语言，只有提供可持续使用的 REPL，才算成为 Poly
-的一等语言能力。统一入口暂定为 `poly repl <language>`，覆盖 `js`、`python`、
-`lua`、`shell` 和 `sql`；语言自己的快捷命令可以后续增加，但不能形成另一套会话
-语义。
+的一等语言能力。统一入口为 `poly repl <language>`，当前覆盖 `js`、`python`、
+`shell`、`sql` 和 `c`，`lua` 仍在计划中；语言自己的快捷命令不能形成另一套会话
+语义。省略 `<language>` 时默认进入 `js`，`python` 和 `shell` 也接受 `py`、`sh`
+缩写。
 
 ### 通用会话契约
 
-- [ ] 为 JS/TS 复用 Bun REPL，为 Python 接入 RustPython interactive compiler
+- [x] 为 JS/TS 复用 Bun REPL，为 Python 接入 RustPython interactive compiler
 - [ ] 持久保存语言上下文；变量、模块缓存、对象 handle 和工作目录可跨命令使用
-- [ ] 统一 history、multiline、语法高亮、补全、粘贴、错误展示和终端宽度处理
+- [ ] 统一 multiline、补全、粘贴、错误展示和终端宽度处理
 - [ ] `Ctrl+C` 中断当前求值但不终止会话，`Ctrl+D` 在输入为空时退出
 - [ ] 对支持异步的语言定义 top-level await、coroutine、取消和 event loop 语义
 - [ ] REPL 中创建的跨语言 proxy 可继续调用，并遵守 GC、异常和释放协议
-- [ ] 按语言隔离 history，并对 URL、连接串、token 和 password 做持久化脱敏
+- [x] 合并各语言 history，跨模式回看时以 `.js`、`.py`、`.sh`、`.sql`、`.c`
+      inline 命令呈现
+- [x] 为 JS/TS、Python、Shell、SQL 和 C 提供语言专属的交互式语法高亮
+- [ ] 对 URL、连接串、token 和 password 做 history 持久化脱敏
 - [ ] 提供适合脚本和工具调用的 `-e`、print/JSON 输出模式，不依赖伪终端
 - [ ] 在 Windows、Linux、macOS 的交互终端和重定向输入下建立 conformance suite
 

@@ -1,7 +1,7 @@
 //! Bun REPL - A modern, feature-rich Read-Eval-Print Loop
 //!
 //! This is a native implementation of Bun's REPL with advanced TUI features:
-//! - Syntax highlighting using QuickAndDirtySyntaxHighlighter
+//! - Language-specific syntax highlighting for JavaScript, Python, Shell, SQL, and C
 //! - Full line editing with cursor movement (Emacs-style keybindings)
 //! - Persistent history with file storage
 //! - Tab completion for properties and commands
@@ -29,6 +29,9 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_paths::{self as path, PathBuffer};
 use bun_sys::{self as sys, Fd};
 
+#[path = "repl_highlighter.rs"]
+mod repl_highlighter;
+
 // ============================================================================
 // C++ Bindings
 // ============================================================================
@@ -53,6 +56,13 @@ unsafe extern "C" {
         targetValue: JSValue,
         prefixPtr: *const u8,
         prefixLen: usize,
+    ) -> JSValue;
+
+    fn Bun__REPL__preview(
+        globalObject: *const JSGlobalObject,
+        sourcePtr: *const u8,
+        sourceLen: usize,
+        exception: *mut JSValue,
     ) -> JSValue;
 }
 
@@ -81,7 +91,6 @@ impl Cursor {
     const HOME: &'static str = concat!("\x1b", "[", "H");
     const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
-    const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
 
 // ============================================================================
@@ -102,9 +111,11 @@ enum Key {
     CtrlN,
     CtrlP,
     CtrlR,
+    CtrlS,
     CtrlT,
     CtrlU,
     CtrlW,
+    CtrlY,
     Backspace,
     Tab,
     Enter,
@@ -125,6 +136,7 @@ enum Key {
     AltB,
     AltD,
     AltF,
+    AltEnter,
     AltBackspace,
     AltLeft,
     AltRight,
@@ -153,9 +165,11 @@ impl Key {
             14 => Key::CtrlN,
             16 => Key::CtrlP,
             18 => Key::CtrlR,
+            19 => Key::CtrlS,
             20 => Key::CtrlT,
             21 => Key::CtrlU,
             23 => Key::CtrlW,
+            25 => Key::CtrlY,
             8 | 127 => Key::Backspace,
             9 => Key::Tab,
             10 | 13 => Key::Enter,
@@ -190,15 +204,23 @@ impl HistoryEntry {
     }
 
     fn append_persisted(&self, output: &mut Vec<u8>) {
-        for line in strings::split(&self.code, b"\n") {
-            if line.is_empty() {
-                continue;
-            }
+        for (index, line) in strings::split(&self.code, b"\n").enumerate() {
             output.extend_from_slice(self.mode.inline_command());
+            if index > 0 {
+                output.push(b'|');
+            }
             output.push(b' ');
             output.extend_from_slice(line);
             output.push(b'\n');
         }
+    }
+
+    fn append_continuation(&mut self, line: &[u8]) {
+        let mut code = Vec::with_capacity(self.code.len() + line.len() + 1);
+        code.extend_from_slice(&self.code);
+        code.push(b'\n');
+        code.extend_from_slice(line);
+        self.code = code.into_boxed_slice();
     }
 
     fn for_mode(&self, mode: ReplMode) -> Vec<u8> {
@@ -216,7 +238,9 @@ struct History {
     entries: Vec<HistoryEntry>,
     position: usize,
     temp_line: Option<Box<[u8]>>,
+    search_prefix: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
+    max_size: usize,
     modified: bool,
 }
 
@@ -226,38 +250,59 @@ impl History {
             entries: Vec::new(),
             position: 0,
             temp_line: None,
+            search_prefix: None,
             file_path: None,
+            max_size: bun_core::getenv_z(bun_core::zstr!("NODE_REPL_HISTORY_SIZE"))
+                .and_then(|value| bun_core::fmt::parse_int::<usize>(value, 10).ok())
+                .filter(|size| *size > 0)
+                .unwrap_or(MAX_HISTORY_SIZE),
             modified: false,
         }
     }
 
     fn load(&mut self) -> Result<(), crate::Error> {
-        let Some(home_path) = env_var::HOME.get() else {
-            return Ok(());
-        };
-        if home_path.is_empty() {
-            return Ok(());
+        let mut migrate_legacy = false;
+        let home_path = env_var::HOME.get();
+        if let Some(configured_path) = bun_core::getenv_z(bun_core::zstr!("NODE_REPL_HISTORY")) {
+            let configured_path = strings::trim(configured_path, b" \t");
+            if configured_path.is_empty() {
+                return Ok(());
+            }
+            self.file_path = Some(Box::<[u8]>::from(configured_path));
+        } else {
+            let Some(home_path) = home_path else {
+                return Ok(());
+            };
+            if home_path.is_empty() {
+                return Ok(());
+            }
+            let mut path_buf = PathBuffer::uninit();
+            let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                &mut path_buf,
+                &[home_path, HISTORY_FILENAME],
+            );
+            self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
+            migrate_legacy = true;
         }
-
-        let mut path_buf = PathBuffer::uninit();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_buf,
-            &[home_path, HISTORY_FILENAME],
-        );
-        self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let mut has_tagged_entries = false;
         let mut needs_rewrite = false;
-        if let sys::Result::Ok(content) = sys::File::read_from(Fd::cwd(), path) {
+        if let Some(path) = self.file_path.as_deref()
+            && let sys::Result::Ok(content) = sys::File::read_from(Fd::cwd(), path)
+        {
             for line in strings::split(&content, b"\n") {
                 if line.is_empty() {
                     continue;
                 }
-                if let Some((mode, code)) = Self::parse_inline(line) {
+                if let Some((mode, code)) = Self::parse_continuation(line)
+                    && let Some(last) = self.entries.last_mut()
+                    && last.mode == mode
+                {
                     has_tagged_entries = true;
-                    if !code.is_empty() {
-                        self.entries.push(HistoryEntry::init(mode, code));
-                    }
+                    last.append_continuation(code);
+                } else if let Some((mode, code)) = Self::parse_inline(line) {
+                    has_tagged_entries = true;
+                    self.entries.push(HistoryEntry::init(mode, code));
                 } else {
                     self.entries.push(HistoryEntry::init(ReplMode::Js, line));
                     needs_rewrite = true;
@@ -265,10 +310,13 @@ impl History {
             }
         }
 
-        if !has_tagged_entries {
+        if migrate_legacy && !has_tagged_entries {
             // The legacy files have no shared timestamps, so preserve each
             // file's order and append them in language order during migration.
             for &(mode, filename) in LEGACY_HISTORY_FILENAMES {
+                let Some(home_path) = home_path else {
+                    break;
+                };
                 let mut legacy_path_buf = PathBuffer::uninit();
                 let legacy_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                     &mut legacy_path_buf,
@@ -286,7 +334,7 @@ impl History {
             }
         }
 
-        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        let excess = self.entries.len().saturating_sub(self.max_size);
         self.entries.drain(..excess);
         self.position = self.entries.len();
         self.modified = needs_rewrite;
@@ -303,6 +351,19 @@ impl History {
         None
     }
 
+    fn parse_continuation(line: &[u8]) -> Option<(ReplMode, &[u8])> {
+        for mode in ReplMode::ALL {
+            let command = mode.inline_command();
+            if line.starts_with(command)
+                && line.get(command.len()) == Some(&b'|')
+                && line.get(command.len() + 1) == Some(&b' ')
+            {
+                return Some((mode, &line[command.len() + 2..]));
+            }
+        }
+        None
+    }
+
     fn save(&mut self) {
         if !self.modified {
             return;
@@ -312,8 +373,8 @@ impl History {
         };
 
         // Build content
-        let start = if self.entries.len() > MAX_HISTORY_SIZE {
-            self.entries.len() - MAX_HISTORY_SIZE
+        let start = if self.entries.len() > self.max_size {
+            self.entries.len() - self.max_size
         } else {
             0
         };
@@ -355,7 +416,7 @@ impl History {
         self.modified = true;
 
         // Trim if too large
-        while self.entries.len() > MAX_HISTORY_SIZE {
+        while self.entries.len() > self.max_size {
             let _ = self.entries.remove(0);
             self.position = self.position.saturating_sub(1);
         }
@@ -370,27 +431,32 @@ impl History {
         // Save current line if at the end
         if self.position == self.entries.len() {
             self.temp_line = Some(Box::<[u8]>::from(current_line));
+            self.search_prefix = Some(Box::<[u8]>::from(current_line));
         }
 
-        if self.position > 0 {
+        let prefix = self.search_prefix.as_deref().unwrap_or_default();
+        while self.position > 0 {
             self.position -= 1;
-            return Some(self.entries[self.position].for_mode(mode));
+            let candidate = self.entries[self.position].for_mode(mode);
+            if candidate.starts_with(prefix) && candidate.as_slice() != current_line {
+                return Some(candidate);
+            }
         }
 
         None
     }
 
     fn next(&mut self, mode: ReplMode) -> Option<Vec<u8>> {
-        if self.position < self.entries.len() {
+        let prefix = self.search_prefix.as_deref().unwrap_or_default();
+        while self.position < self.entries.len() {
             self.position += 1;
-        }
-
-        if self.position == self.entries.len() {
-            return self.temp_line.as_deref().map(|line| line.to_vec());
-        }
-
-        if self.position < self.entries.len() {
-            return Some(self.entries[self.position].for_mode(mode));
+            if self.position == self.entries.len() {
+                return self.temp_line.as_deref().map(|line| line.to_vec());
+            }
+            let candidate = self.entries[self.position].for_mode(mode);
+            if candidate.starts_with(prefix) {
+                return Some(candidate);
+            }
         }
 
         None
@@ -399,7 +465,64 @@ impl History {
     fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
+        self.search_prefix = None;
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistorySearchDirection {
+    Backward,
+    Forward,
+}
+
+struct HistorySearch {
+    active: bool,
+    direction: HistorySearchDirection,
+    query: Vec<u8>,
+    position: usize,
+    matched_position: Option<usize>,
+    matched_line: Option<Vec<u8>>,
+    original_line: Vec<u8>,
+    original_cursor: usize,
+}
+
+impl HistorySearch {
+    fn init() -> Self {
+        Self {
+            active: false,
+            direction: HistorySearchDirection::Backward,
+            query: Vec::new(),
+            position: 0,
+            matched_position: None,
+            matched_line: None,
+            original_line: Vec::new(),
+            original_cursor: 0,
+        }
+    }
+
+    fn begin(&mut self, line: &[u8], cursor: usize, history_len: usize) {
+        self.active = true;
+        self.direction = HistorySearchDirection::Backward;
+        self.query.clear();
+        self.position = history_len;
+        self.matched_position = None;
+        self.matched_line = None;
+        self.original_line.clear();
+        self.original_line.extend_from_slice(line);
+        self.original_cursor = cursor;
+    }
+
+    fn reset_matches(&mut self, history_len: usize) {
+        self.position = history_len;
+        self.matched_position = None;
+        self.matched_line = None;
+        self.direction = HistorySearchDirection::Backward;
+    }
+}
+
+enum HistorySearchKeyResult {
+    Consumed,
+    Reprocess,
 }
 
 // ============================================================================
@@ -450,6 +573,63 @@ impl LineEditor {
         }
         self.cursor += slice.len();
         Ok(())
+    }
+
+    fn contains_newline(&self) -> bool {
+        self.buffer.contains(&b'\n')
+    }
+
+    fn move_line_up(&mut self) -> bool {
+        let current_start = self.buffer[..self.cursor]
+            .iter()
+            .rposition(|ch| *ch == b'\n')
+            .map_or(0, |position| position + 1);
+        if current_start == 0 {
+            return false;
+        }
+
+        let previous_end = current_start - 1;
+        let previous_start = self.buffer[..previous_end]
+            .iter()
+            .rposition(|ch| *ch == b'\n')
+            .map_or(0, |position| position + 1);
+        let column = self.cursor - current_start;
+        self.cursor = previous_start + column.min(previous_end - previous_start);
+        while self.cursor < self.buffer.len()
+            && self.cursor > previous_start
+            && self.buffer[self.cursor] & 0xC0 == 0x80
+        {
+            self.cursor -= 1;
+        }
+        true
+    }
+
+    fn move_line_down(&mut self) -> bool {
+        let current_start = self.buffer[..self.cursor]
+            .iter()
+            .rposition(|ch| *ch == b'\n')
+            .map_or(0, |position| position + 1);
+        let Some(current_end_offset) = self.buffer[self.cursor..]
+            .iter()
+            .position(|ch| *ch == b'\n')
+        else {
+            return false;
+        };
+        let current_end = self.cursor + current_end_offset;
+        let next_start = current_end + 1;
+        let next_end = self.buffer[next_start..]
+            .iter()
+            .position(|ch| *ch == b'\n')
+            .map_or(self.buffer.len(), |position| next_start + position);
+        let column = self.cursor - current_start;
+        self.cursor = next_start + column.min(next_end - next_start);
+        while self.cursor < self.buffer.len()
+            && self.cursor > next_start
+            && self.buffer[self.cursor] & 0xC0 == 0x80
+        {
+            self.cursor -= 1;
+        }
+        true
     }
 
     /// Byte offset of the start of the codepoint ending just before `pos`.
@@ -643,7 +823,7 @@ impl ReplCommand {
         },
         ReplCommand {
             name: b".clear",
-            help: "Clear the screen",
+            help: "Cancel the current input (Ctrl+L clears the screen)",
             handler: cmd_clear,
         },
         ReplCommand {
@@ -748,6 +928,11 @@ fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
         Color::RESET
     ));
     repl.print(format_args!(
+        "  {}Ctrl+Y{}       Yank the last deleted text\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
         "  {}Ctrl+D{}       Delete character / Exit if line empty\n",
         Color::CYAN,
         Color::RESET
@@ -763,7 +948,12 @@ fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
         Color::RESET
     ));
     repl.print(format_args!(
-        "  {}Up/Down{}      Navigate history\n",
+        "  {}Up/Down{}      Navigate history by prefix\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Ctrl+R/S{}     Search history backward/forward\n",
         Color::CYAN,
         Color::RESET
     ));
@@ -799,7 +989,7 @@ fn cmd_copy(repl: &mut Repl, args: &[u8]) -> ReplResult {
         if let Err(err) = repl.copy_value_to_clipboard(repl.last_result.value()) {
             if let Some(global) = repl.global {
                 let exc = global.take_exception(err);
-                repl.set_last_error(exc);
+                repl.record_js_error(exc);
                 repl.print_js_error(exc);
             }
         }
@@ -824,7 +1014,10 @@ fn cmd_py(repl: &mut Repl, args: &[u8]) -> ReplResult {
     repl.switch_mode(ReplMode::Python);
     repl.print(format_args!(
         "{}Switched to Python mode{} (type {} .js {} to switch back)\n",
-        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+        Color::GREEN,
+        Color::RESET,
+        Color::CYAN,
+        Color::RESET
     ));
     ReplResult::SkipEval
 }
@@ -838,7 +1031,10 @@ fn cmd_js(repl: &mut Repl, args: &[u8]) -> ReplResult {
     repl.switch_mode(ReplMode::Js);
     repl.print(format_args!(
         "{}Switched to JavaScript mode{} (type {} .py {} for Python)\n",
-        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+        Color::GREEN,
+        Color::RESET,
+        Color::CYAN,
+        Color::RESET
     ));
     ReplResult::SkipEval
 }
@@ -852,7 +1048,10 @@ fn cmd_sh(repl: &mut Repl, args: &[u8]) -> ReplResult {
     repl.switch_mode(ReplMode::Shell);
     repl.print(format_args!(
         "{}Switched to Shell mode{} (Bun Shell, in-process; type {} .js {} to switch back)\n",
-        Color::GREEN, Color::RESET, Color::CYAN, Color::RESET
+        Color::GREEN,
+        Color::RESET,
+        Color::CYAN,
+        Color::RESET
     ));
     ReplResult::SkipEval
 }
@@ -892,10 +1091,9 @@ fn cmd_mode(repl: &mut Repl, _: &[u8]) -> ReplResult {
 }
 
 fn cmd_clear(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    // Clear screen
-    repl.write(Cursor::CLEAR_SCREEN.as_bytes());
-    repl.write(Cursor::CLEAR_SCROLLBACK.as_bytes());
-    repl.write(Cursor::HOME.as_bytes());
+    repl.line_editor.clear();
+    repl.multiline_buffer.clear();
+    repl.input_mode = InputMode::Normal;
     ReplResult::SkipEval
 }
 
@@ -1082,7 +1280,9 @@ enum InputMode {
 
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
+    kill_buffer: Vec<u8>,
     history: History,
+    history_search: HistorySearch,
     multiline_buffer: Vec<u8>,
     editor_buffer: Vec<u8>,
 
@@ -1093,7 +1293,12 @@ pub(super) struct Repl<'a> {
     is_tty: bool,
     use_colors: bool,
     terminal_width: u16,
+    rendered_rows: usize,
+    rendered_cursor_row: usize,
     ctrl_c_pressed: bool,
+    strict_mode: bool,
+    underscore_assigned: bool,
+    underscore_error_assigned: bool,
 
     // Buffered stdin
     stdin_buf: [u8; 256],
@@ -1133,7 +1338,9 @@ impl<'a> Repl<'a> {
     pub(super) fn init(mode: ReplMode) -> Repl<'a> {
         Repl {
             line_editor: LineEditor::init(),
+            kill_buffer: Vec::new(),
             history: History::init(),
+            history_search: HistorySearch::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
             mode,
@@ -1142,7 +1349,13 @@ impl<'a> Repl<'a> {
             is_tty: false,
             use_colors: false,
             terminal_width: 80,
+            rendered_rows: 0,
+            rendered_cursor_row: 0,
             ctrl_c_pressed: false,
+            strict_mode: bun_core::getenv_z(bun_core::zstr!("NODE_REPL_MODE"))
+                .is_some_and(|mode| strings::trim(mode, b" \t").eq_ignore_ascii_case(b"strict")),
+            underscore_assigned: false,
+            underscore_error_assigned: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
             stdin_buf_end: 0,
@@ -1171,6 +1384,58 @@ impl<'a> Repl<'a> {
         self.last_error = value.protected();
     }
 
+    fn record_js_error(&mut self, value: JSValue) {
+        let Some(global) = self.global else {
+            return;
+        };
+        let stored = if self.underscore_error_assigned {
+            self.last_error.value()
+        } else {
+            self.set_last_error(value);
+            value
+        };
+        global.to_js_value().put(global, b"_error", stored);
+    }
+
+    fn update_special_variables(&mut self, code: &[u8], result: JSValue) {
+        let Some(global) = self.global else {
+            return;
+        };
+        let assigned_underscore = code_assigns_identifier(code, b"_");
+        let assigned_error = code_assigns_identifier(code, b"_error");
+        let underscore_value = assigned_underscore
+            .then(|| global.to_js_value().get(global, b"_"))
+            .and_then(Result::ok)
+            .flatten()
+            .unwrap_or(JSValue::UNDEFINED);
+        let error_value = assigned_error
+            .then(|| global.to_js_value().get(global, b"_error"))
+            .and_then(Result::ok)
+            .flatten()
+            .unwrap_or(JSValue::UNDEFINED);
+
+        if assigned_underscore {
+            self.set_last_result(underscore_value);
+            if !self.underscore_assigned {
+                self.underscore_assigned = true;
+                self.print(format_args!("Expression assignment to _ now disabled.\n"));
+            }
+        } else if !self.underscore_assigned {
+            self.set_last_result(result);
+            global.to_js_value().put(global, b"_", result);
+        }
+
+        if assigned_error {
+            self.set_last_error(error_value);
+            if !self.underscore_error_assigned {
+                self.underscore_error_assigned = true;
+                self.print(format_args!(
+                    "Expression assignment to _error now disabled.\n"
+                ));
+            }
+        }
+    }
+
     // ========================================================================
     // Terminal I/O
     // ========================================================================
@@ -1186,11 +1451,7 @@ impl<'a> Repl<'a> {
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
 
-        // Get terminal size
-        let ts = Output::TERMINAL_SIZE.load();
-        if ts.col > 0 {
-            self.terminal_width = ts.col;
-        }
+        self.update_terminal_width();
 
         // Enable raw mode
         #[cfg(unix)]
@@ -1303,6 +1564,41 @@ impl<'a> Repl<'a> {
         }
     }
 
+    fn update_terminal_width(&mut self) {
+        #[cfg(unix)]
+        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
+            if size.col > 0 {
+                self.terminal_width = size.col;
+                return;
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use bun_sys::windows;
+            if let Some(handle) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
+                let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+                // SAFETY: `handle` is stdout's live console handle and `info` is an out-param.
+                if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut info) }
+                    != windows::FALSE
+                {
+                    let width = info.srWindow.Right - info.srWindow.Left + 1;
+                    if let Ok(width) = u16::try_from(width) {
+                        if width > 0 {
+                            self.terminal_width = width;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let size = Output::TERMINAL_SIZE.load();
+        if size.col > 0 {
+            self.terminal_width = size.col;
+        }
+    }
+
     fn read_byte(&mut self) -> Option<u8> {
         if self.stdin_buf_start < self.stdin_buf_end {
             let b = self.stdin_buf[self.stdin_buf_start];
@@ -1397,6 +1693,8 @@ impl<'a> Repl<'a> {
                 return Some(Key::AltD);
             } else if second == b'f' {
                 return Some(Key::AltF);
+            } else if matches!(second, b'\n' | b'\r') {
+                return Some(Key::AltEnter);
             } else if second == 127 {
                 return Some(Key::AltBackspace);
             }
@@ -1503,53 +1801,291 @@ impl<'a> Repl<'a> {
         }
     }
 
-    fn refresh_line(&self) {
+    fn write_cursor_move(&self, count: usize, direction: u8) {
+        if count == 0 {
+            return;
+        }
+        let mut buf = [0u8; 32];
+        let capacity = buf.len();
+        let mut writer: &mut [u8] = &mut buf;
+        if write!(writer, "{}{}{}", CSI, count, direction as char).is_ok() {
+            let written = capacity - writer.len();
+            self.write(&buf[..written]);
+        }
+    }
+
+    fn clear_rendered_input(&self) {
+        self.write(b"\r");
+        if self.is_tty && self.rendered_rows > 0 {
+            self.write_cursor_move(self.rendered_cursor_row, b'A');
+            self.write(b"\x1b[J");
+        } else {
+            self.write(Cursor::CLEAR_LINE.as_bytes());
+        }
+    }
+
+    fn input_display_position(&self, line: &[u8], byte_position: usize) -> (usize, usize) {
+        let terminal_width = usize::from(self.terminal_width.max(1));
+        let mut row = 0usize;
+        let mut start = 0usize;
+        let byte_position = byte_position.min(line.len());
+        let mut line_index = 0usize;
+
+        loop {
+            let end = line[start..]
+                .iter()
+                .position(|ch| *ch == b'\n')
+                .map_or(line.len(), |offset| start + offset);
+            let position_on_line = byte_position.min(end);
+            let text_width =
+                strings::visible::width::exclude_ansi_colors::utf8(&line[start..position_on_line]);
+            let prompt_width = if line_index == 0 {
+                self.get_prompt_length()
+            } else {
+                4
+            };
+            let total_width = prompt_width + text_width;
+            let wrapped_rows = total_width.saturating_sub(1) / terminal_width;
+            let at_pending_wrap = total_width > 0
+                && total_width.is_multiple_of(terminal_width)
+                && position_on_line == end;
+            let (position_row, column) = if at_pending_wrap {
+                (wrapped_rows, terminal_width - 1)
+            } else {
+                (total_width / terminal_width, total_width % terminal_width)
+            };
+
+            if byte_position <= end || end == line.len() {
+                return (row + position_row, column);
+            }
+
+            row += wrapped_rows + 1;
+            start = end + 1;
+            line_index += 1;
+        }
+    }
+
+    fn finish_rendered_input(&mut self) {
+        if self.is_tty && self.rendered_rows > 0 {
+            let rows_below = self
+                .rendered_rows
+                .saturating_sub(self.rendered_cursor_row + 1);
+            self.write_cursor_move(rows_below, b'B');
+        }
+        self.write(b"\r\n");
+        self.rendered_rows = 0;
+        self.rendered_cursor_row = 0;
+    }
+
+    fn completion_preview(&self, line: &[u8], cursor: usize) -> Vec<u8> {
+        if self.input_mode != InputMode::Normal
+            || cursor != line.len()
+            || line.is_empty()
+            || line.contains(&b'\n')
+        {
+            return Vec::new();
+        }
+
+        if line[0] == b'.' {
+            let candidates: Vec<Vec<u8>> = ReplCommand::ALL
+                .iter()
+                .filter(|command| command.name.starts_with(line))
+                .map(|command| command.name.to_vec())
+                .collect();
+            return common_completion_suffix(&candidates, line.len());
+        }
+
+        if self.mode != ReplMode::Js {
+            return Vec::new();
+        }
+        let Some(global) = self.global else {
+            return Vec::new();
+        };
+
+        let mut word_start = cursor;
+        while word_start > 0 {
+            let ch = line[word_start - 1];
+            if !ch.is_ascii_alphanumeric() && !matches!(ch, b'_' | b'$') {
+                break;
+            }
+            word_start -= 1;
+        }
+        let prefix = &line[word_start..cursor];
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let target = if let Some((_, expression)) = completion_receiver(line, word_start) {
+            let Some(target) = resolve_js_completion_target(global, expression) else {
+                return Vec::new();
+            };
+            target
+        } else {
+            JSValue::UNDEFINED
+        };
+        let candidates = js_completion_candidates(global, target, prefix);
+        common_completion_suffix(&candidates, prefix.len())
+    }
+
+    fn result_preview(&self, code: &[u8]) -> Vec<u8> {
+        if self.mode != ReplMode::Js
+            || self.input_mode != InputMode::Normal
+            || !is_safe_js_preview_expression(code)
+        {
+            return Vec::new();
+        }
+        let Some(global) = self.global else {
+            return Vec::new();
+        };
+
+        let mut exception = JSValue::UNDEFINED;
+        // SAFETY: `global` is live and `code` and `exception` remain valid for the call.
+        let value =
+            unsafe { Bun__REPL__preview(global, code.as_ptr(), code.len(), &raw mut exception) };
+        if !exception.is_undefined() || value.is_object() {
+            return Vec::new();
+        }
+
+        let mut preview = Vec::new();
+        if jsc::ConsoleObject::format2(
+            jsc::ConsoleObject::MessageLevel::Log,
+            global,
+            core::slice::from_ref(&value),
+            &mut preview,
+            jsc::ConsoleObject::FormatOptions {
+                enable_colors: false,
+                add_newline: false,
+                flush: false,
+                quote_strings: true,
+                ordered_properties: false,
+                max_depth: 1,
+                ..Default::default()
+            },
+        )
+        .is_err()
+        {
+            global.clear_exception();
+            return Vec::new();
+        }
+        if let Some(line_break) = preview
+            .iter()
+            .position(|ch| matches!(ch, b'\r' | b'\n' | 0x0b))
+        {
+            preview.truncate(line_break);
+        }
+        if strings::trim(code, b" \t") == preview {
+            return Vec::new();
+        }
+
+        let limit = usize::from(self.terminal_width).clamp(8, 250);
+        if preview.len() > limit {
+            let mut end = limit.saturating_sub(3);
+            while end > 0 && preview[end] & 0xc0 == 0x80 {
+                end -= 1;
+            }
+            preview.truncate(end);
+            preview.extend_from_slice(b"...");
+        }
+        preview
+    }
+
+    fn refresh_line(&mut self) {
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
 
-        let prompt = self.get_prompt();
-        let prompt_len = self.get_prompt_length();
-        let line = self.line_editor.get_line();
-
-        // Move to beginning of line
-        self.write(b"\r");
-        self.write(Cursor::CLEAR_LINE.as_bytes());
-
-        // Write prompt
-        self.write(prompt);
-
-        // Write line with syntax highlighting
-        if self.use_colors && !line.is_empty() && line.len() <= 2048 {
-            self.write_highlighted(line);
-        } else {
-            self.write(line);
+        if self.is_tty {
+            self.update_terminal_width();
         }
 
-        // Position cursor. The cursor is a byte offset, but the terminal column
-        // is the display width of the text before it, so multi-byte UTF-8 and
-        // wide (e.g. CJK) characters advance the column correctly.
-        let cursor_col =
-            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
-        let cursor_pos = prompt_len + cursor_col;
-        if cursor_pos < self.terminal_width as usize {
-            self.write(b"\r");
-            if cursor_pos > 0 {
-                let mut buf = [0u8; 16];
-                let mut w: &mut [u8] = &mut buf;
-                if write!(w, "{}{}C", CSI, cursor_pos).is_ok() {
-                    let written = 16 - w.len();
-                    self.write(&buf[..written]);
+        let prompt = self.get_prompt();
+        let line = self.line_editor.get_line().to_vec();
+        let completion_preview = if self.is_tty {
+            self.completion_preview(&line, self.line_editor.cursor)
+        } else {
+            Vec::new()
+        };
+        let mut preview_code = line.clone();
+        preview_code.extend_from_slice(&completion_preview);
+        let mut rendered_line = line.clone();
+        if !completion_preview.is_empty() {
+            if !self.use_colors {
+                rendered_line.extend_from_slice(b" // ");
+            }
+            rendered_line.extend_from_slice(&completion_preview);
+        }
+        let result_preview = if self.is_tty && self.line_editor.cursor == line.len() {
+            self.result_preview(&preview_code)
+        } else {
+            Vec::new()
+        };
+
+        self.clear_rendered_input();
+
+        for (index, segment) in strings::split(&line, b"\n").enumerate() {
+            if index > 0 {
+                self.write(b"\r\n");
+                if self.use_colors {
+                    self.write(concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes());
+                } else {
+                    self.write(b"... ");
                 }
+            } else {
+                self.write(prompt);
+            }
+            if self.use_colors && !segment.is_empty() {
+                self.write_highlighted(segment);
+            } else {
+                self.write(segment);
             }
         }
+
+        if !completion_preview.is_empty() {
+            if self.use_colors {
+                self.print(format_args!(
+                    "{}{}{}",
+                    Color::DIM,
+                    BStr::new(&completion_preview),
+                    Color::RESET
+                ));
+            } else {
+                self.print(format_args!(" // {}", BStr::new(&completion_preview)));
+            }
+        }
+
+        let (end_row, _) = self.input_display_position(&rendered_line, rendered_line.len());
+        let (cursor_row, cursor_column) =
+            self.input_display_position(&line, self.line_editor.cursor);
+        let mut rendered_end_row = end_row;
+        if !result_preview.is_empty() {
+            self.write(b"\r\n");
+            let prefix_width = if self.use_colors { 0 } else { 3 };
+            if self.use_colors {
+                self.print(format_args!(
+                    "{}{}{}",
+                    Color::DIM,
+                    BStr::new(&result_preview),
+                    Color::RESET
+                ));
+            } else {
+                self.print(format_args!("// {}", BStr::new(&result_preview)));
+            }
+            let preview_width =
+                prefix_width + strings::visible::width::exclude_ansi_colors::utf8(&result_preview);
+            rendered_end_row +=
+                1 + preview_width.saturating_sub(1) / usize::from(self.terminal_width.max(1));
+        }
+        self.write(b"\r");
+        self.write_cursor_move(rendered_end_row.saturating_sub(cursor_row), b'A');
+        self.write_cursor_move(cursor_column, b'C');
+        self.rendered_rows = rendered_end_row + 1;
+        self.rendered_cursor_row = cursor_row;
 
         Output::flush();
     }
 
     fn write_highlighted(&self, text: &[u8]) {
         if self.mode != ReplMode::Js {
-            // Non-JS modes use a lightweight per-language keyword highlighter.
-            self.write_highlighted_other(text);
+            let highlighted = repl_highlighter::highlight(self.mode, text);
+            let _ = Output::writer().write_all(&highlighted);
             return;
         }
         let writer = Output::writer();
@@ -1564,101 +2100,6 @@ impl<'a> Repl<'a> {
         if writer.write_fmt(format_args!("{}", highlighter)).is_err() {
             let _ = writer.write_all(text);
         }
-    }
-
-    /// Lightweight syntax highlighting for Python / Shell / SQL / C input:
-    /// keywords in cyan, string literals in green, comments in dim, numbers
-    /// in yellow. This is intentionally a simple tokenizer — the full
-    /// rust-analyzer-style highlighter for each language is future work.
-    fn write_highlighted_other(&self, text: &[u8]) {
-        let words = keywords_for_mode(self.mode);
-        let mut out: Vec<u8> = Vec::with_capacity(text.len() + 32);
-        let mut i = 0;
-        let bytes = text;
-        while i < bytes.len() {
-            let ch = bytes[i];
-            // String literals ('...' "...")
-            if ch == b'"' || ch == b'\'' || (self.mode == ReplMode::Shell && ch == b'`') {
-                let start = i;
-                i += 1;
-                while i < bytes.len() && bytes[i] != ch {
-                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                        i += 2;
-                    } else {
-                        i += 1;
-                    }
-                }
-                if i < bytes.len() {
-                    i += 1; // closing quote
-                }
-                out.extend_from_slice(Color::GREEN.as_bytes());
-                out.extend_from_slice(&bytes[start..i]);
-                out.extend_from_slice(Color::RESET.as_bytes());
-                continue;
-            }
-            // C-style block comments (C mode).
-            if self.mode == ReplMode::C
-                && ch == b'/'
-                && i + 1 < bytes.len()
-                && bytes[i + 1] == b'*'
-            {
-                let start = i;
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(bytes.len());
-                out.extend_from_slice(b"\x1b[2m");
-                out.extend_from_slice(&bytes[start..i]);
-                out.extend_from_slice(Color::RESET.as_bytes());
-                continue;
-            }
-            // Line comments.
-            if ch == b'#'
-                || (self.mode == ReplMode::C && ch == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/')
-            {
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                out.extend_from_slice(b"\x1b[2m");
-                out.extend_from_slice(&bytes[start..i]);
-                out.extend_from_slice(Color::RESET.as_bytes());
-                continue;
-            }
-            // Identifiers / keywords.
-            if ch.is_ascii_alphabetic() || ch == b'_' {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                let word = &bytes[start..i];
-                if words.binary_search(&word).is_ok() {
-                    out.extend_from_slice(Color::CYAN.as_bytes());
-                    out.extend_from_slice(word);
-                    out.extend_from_slice(Color::RESET.as_bytes());
-                } else {
-                    out.extend_from_slice(word);
-                }
-                continue;
-            }
-            // Numbers.
-            if ch.is_ascii_digit() {
-                let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.' || bytes[i] == b'_')
-                {
-                    i += 1;
-                }
-                out.extend_from_slice(Color::YELLOW.as_bytes());
-                out.extend_from_slice(&bytes[start..i]);
-                out.extend_from_slice(Color::RESET.as_bytes());
-                continue;
-            }
-            out.push(ch);
-            i += 1;
-        }
-        let _ = Output::writer().write_all(&out);
     }
 
     // ========================================================================
@@ -1864,7 +2305,8 @@ impl<'a> Repl<'a> {
                 }
                 _ => {
                     if let Some(value) = export.value {
-                        let value_json = serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
+                        let value_json =
+                            serde_json::to_string(&value).unwrap_or_else(|_| "null".into());
                         code.push_str(&format!("globalThis[{name_json}] = {value_json};\n"));
                     }
                 }
@@ -1921,7 +2363,7 @@ impl<'a> Repl<'a> {
 
         // Check for exception
         if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
+            self.record_js_error(exception);
             self.print_js_error(exception);
             return;
         }
@@ -1959,10 +2401,7 @@ impl<'a> Repl<'a> {
                 }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
-                    // Set _error on the global object
-                    let global_this = global.to_js_value();
-                    global_this.put(global, b"_error", rejection);
+                    self.record_js_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
                     return;
@@ -1988,7 +2427,7 @@ impl<'a> Repl<'a> {
                     Ok(v) => v,
                     Err(err) => {
                         let exc = global.take_exception(err);
-                        self.set_last_error(exc);
+                        self.record_js_error(exc);
                         self.print_js_error(exc);
                         vm.as_mut().tick();
                         return;
@@ -1999,15 +2438,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // Store and print result
-        self.set_last_result(actual_result);
-
-        // Set _ to the last result (only if not undefined)
-        // Use the global object as JSValue and put the property on it
-        if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, b"_", actual_result);
-        }
+        self.update_special_variables(code, actual_result);
 
         if actual_result.is_undefined() {
             if self.use_colors {
@@ -2156,8 +2587,7 @@ impl<'a> Repl<'a> {
         false
     }
 
-    /// Evaluate code without REPL transforms (fallback for errors)
-    /// The C++ Bun__REPL__evaluate handles setting _ and _error
+    /// Evaluate code without REPL transforms (fallback for errors).
     fn evaluate_raw(&mut self, code: &[u8]) {
         let Some(global) = self.global else {
             return;
@@ -2178,12 +2608,12 @@ impl<'a> Repl<'a> {
         };
 
         if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
+            self.record_js_error(exception);
             self.print_js_error(exception);
             return;
         }
 
-        self.set_last_result(result);
+        self.update_special_variables(code, result);
 
         if !result.is_undefined() {
             self.print_formatted_value(result);
@@ -2413,7 +2843,7 @@ impl<'a> Repl<'a> {
         };
 
         if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
+            self.record_js_error(exception);
             self.print_js_error(exception);
             return;
         }
@@ -2441,7 +2871,7 @@ impl<'a> Repl<'a> {
                 }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
+                    self.record_js_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
                     return;
@@ -2461,7 +2891,7 @@ impl<'a> Repl<'a> {
                     Ok(v) => v,
                     Err(err) => {
                         let exc = global.take_exception(err);
-                        self.set_last_error(exc);
+                        self.record_js_error(exc);
                         self.print_js_error(exc);
                         vm.as_mut().tick();
                         return;
@@ -2472,15 +2902,11 @@ impl<'a> Repl<'a> {
             }
         }
 
-        self.set_last_result(actual_result);
-        if !actual_result.is_undefined() {
-            let global_this = global.to_js_value();
-            global_this.put(global, b"_", actual_result);
-        }
+        self.update_special_variables(code, actual_result);
 
         if let Err(err) = self.copy_value_to_clipboard(actual_result) {
             let exc = global.take_exception(err);
-            self.set_last_error(exc);
+            self.record_js_error(exc);
             self.print_js_error(exc);
         }
         vm.as_mut().tick();
@@ -2594,18 +3020,21 @@ impl<'a> Repl<'a> {
         // Check if code looks like an object literal that would be misinterpreted as a block
         // If code starts with { (after whitespace) and doesn't end with ;
         let is_object_literal = is_likely_object_literal(code);
-        let processed_buf: Option<Vec<u8>>;
-        let processed_code: &[u8] = if is_object_literal {
-            let mut v = Vec::with_capacity(code.len() + 2);
-            v.push(b'(');
-            v.extend_from_slice(code);
-            v.push(b')');
-            processed_buf = Some(v);
-            processed_buf.as_deref().unwrap()
-        } else {
-            processed_buf = None;
-            let _ = &processed_buf;
+        let mut processed = Vec::new();
+        if self.strict_mode {
+            processed.extend_from_slice(b"\"use strict\";\n");
+        }
+        if is_object_literal {
+            processed.push(b'(');
+            processed.extend_from_slice(code);
+            processed.push(b')');
+        } else if !processed.is_empty() {
+            processed.extend_from_slice(code);
+        }
+        let processed_code = if processed.is_empty() {
             code
+        } else {
+            processed.as_slice()
         };
 
         // Create arena for parsing
@@ -2702,7 +3131,14 @@ impl<'a> Repl<'a> {
 
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
-        Some(Box::<[u8]>::from(written))
+        if self.strict_mode {
+            let mut strict = Vec::with_capacity(written.len() + 14);
+            strict.extend_from_slice(b"\"use strict\";\n");
+            strict.extend_from_slice(written);
+            Some(strict.into_boxed_slice())
+        } else {
+            Some(Box::<[u8]>::from(written))
+        }
     }
 
     fn print_js_error(&self, error_value: JSValue) {
@@ -2775,7 +3211,7 @@ impl<'a> Repl<'a> {
         ) {
             // A getter on the value threw during inspection — show that error.
             let exc = global.take_exception(err);
-            self.set_last_error(exc);
+            self.record_js_error(exc);
             self.print_js_error(exc);
             return;
         }
@@ -2785,6 +3221,205 @@ impl<'a> Repl<'a> {
     // ========================================================================
     // Main Loop
     // ========================================================================
+
+    fn history_search_match(&mut self) {
+        let query = self.history_search.query.as_slice();
+        let len = self.history.entries.len();
+        let mut position = self.history_search.position.min(len);
+
+        let found = match self.history_search.direction {
+            HistorySearchDirection::Backward => {
+                let mut result = None;
+                while position > 0 {
+                    position -= 1;
+                    let candidate = self.history.entries[position].for_mode(self.mode);
+                    if query.is_empty()
+                        || candidate.windows(query.len()).any(|window| window == query)
+                    {
+                        result = Some((position, candidate));
+                        break;
+                    }
+                }
+                result
+            }
+            HistorySearchDirection::Forward => {
+                let mut result = None;
+                let mut next = position.saturating_add(1);
+                while next < len {
+                    let candidate = self.history.entries[next].for_mode(self.mode);
+                    if query.is_empty()
+                        || candidate.windows(query.len()).any(|window| window == query)
+                    {
+                        result = Some((next, candidate));
+                        break;
+                    }
+                    next += 1;
+                }
+                result
+            }
+        };
+
+        if let Some((position, line)) = found {
+            self.history_search.position = position;
+            self.history_search.matched_position = Some(position);
+            self.history_search.matched_line = Some(line);
+        } else {
+            self.history_search.matched_position = None;
+            self.history_search.matched_line = None;
+        }
+    }
+
+    fn render_history_search(&mut self) {
+        if self.is_tty {
+            self.update_terminal_width();
+        }
+        self.clear_rendered_input();
+        let label = match self.history_search.direction {
+            HistorySearchDirection::Backward => b"bck-i-search: ".as_slice(),
+            HistorySearchDirection::Forward => b"fwd-i-search: ".as_slice(),
+        };
+        let mut display = Vec::with_capacity(
+            label.len()
+                + self.history_search.query.len()
+                + 4
+                + self
+                    .history_search
+                    .matched_line
+                    .as_ref()
+                    .map_or(0, Vec::len),
+        );
+        display.extend_from_slice(label);
+        display.extend_from_slice(&self.history_search.query);
+        display.push(b'_');
+        if let Some(line) = self.history_search.matched_line.as_deref() {
+            display.extend_from_slice(b" -> ");
+            for (index, segment) in strings::split(line, b"\n").enumerate() {
+                if index > 0 {
+                    display.extend_from_slice(b"\\n");
+                }
+                display.extend_from_slice(segment);
+            }
+        }
+        self.write(&display);
+        let display_width = strings::visible::width::exclude_ansi_colors::utf8(&display);
+        let terminal_width = usize::from(self.terminal_width.max(1));
+        let row = display_width.saturating_sub(1) / terminal_width;
+        self.rendered_rows = row + 1;
+        self.rendered_cursor_row = row;
+        Output::flush();
+    }
+
+    fn begin_history_search(&mut self) {
+        self.history_search.begin(
+            self.line_editor.get_line(),
+            self.line_editor.cursor,
+            self.history.entries.len(),
+        );
+        self.render_history_search();
+    }
+
+    fn end_history_search(&mut self, accept: bool) {
+        if accept {
+            if let Some(line) = self.history_search.matched_line.as_deref() {
+                let _ = self.line_editor.set(line);
+            }
+        } else {
+            let _ = self.line_editor.set(&self.history_search.original_line);
+            self.line_editor.cursor = self
+                .history_search
+                .original_cursor
+                .min(self.line_editor.buffer.len());
+        }
+        self.history_search.active = false;
+        self.refresh_line();
+    }
+
+    fn handle_history_search_key(&mut self, key: Key) -> HistorySearchKeyResult {
+        match key {
+            Key::CtrlR => {
+                self.history_search.direction = HistorySearchDirection::Backward;
+                self.history_search_match();
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::CtrlS => {
+                self.history_search.direction = HistorySearchDirection::Forward;
+                self.history_search_match();
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::Backspace => {
+                if !self.history_search.query.is_empty() {
+                    let mut boundary = self.history_search.query.len() - 1;
+                    while boundary > 0 && self.history_search.query[boundary] & 0xC0 == 0x80 {
+                        boundary -= 1;
+                    }
+                    self.history_search.query.truncate(boundary);
+                }
+                self.history_search
+                    .reset_matches(self.history.entries.len());
+                if !self.history_search.query.is_empty() {
+                    self.history_search_match();
+                }
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::CtrlW => {
+                while self
+                    .history_search
+                    .query
+                    .last()
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    self.history_search.query.pop();
+                }
+                while self
+                    .history_search
+                    .query
+                    .last()
+                    .is_some_and(|ch| !ch.is_ascii_whitespace())
+                {
+                    self.history_search.query.pop();
+                }
+                self.history_search
+                    .reset_matches(self.history.entries.len());
+                if !self.history_search.query.is_empty() {
+                    self.history_search_match();
+                }
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::CtrlC | Key::Escape => {
+                self.ctrl_c_pressed = false;
+                self.end_history_search(false);
+                HistorySearchKeyResult::Consumed
+            }
+            Key::Char(ch) => {
+                self.history_search.query.push(ch);
+                self.history_search
+                    .reset_matches(self.history.entries.len());
+                self.history_search_match();
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::Text(bytes, len) => {
+                self.history_search.query.extend_from_slice(&bytes[..len]);
+                self.history_search
+                    .reset_matches(self.history.entries.len());
+                self.history_search_match();
+                self.render_history_search();
+                HistorySearchKeyResult::Consumed
+            }
+            Key::Enter => {
+                self.end_history_search(true);
+                HistorySearchKeyResult::Reprocess
+            }
+            _ => {
+                self.end_history_search(true);
+                HistorySearchKeyResult::Reprocess
+            }
+        }
+    }
 
     pub(super) fn run_with_vm(
         &mut self,
@@ -2847,13 +3482,22 @@ impl<'a> Repl<'a> {
                 self.ctrl_c_pressed = false;
             }
 
+            if self.history_search.active
+                && matches!(
+                    self.handle_history_search_key(key),
+                    HistorySearchKeyResult::Consumed
+                )
+            {
+                continue;
+            }
+
             match key {
                 Key::Enter => self.handle_enter()?,
                 Key::CtrlC => self.handle_ctrl_c(),
                 Key::CtrlD => match self.input_mode {
                     InputMode::Editor => {
                         // Finish editor mode
-                        self.print(format_args!("\n"));
+                        self.finish_rendered_input();
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
@@ -2865,7 +3509,7 @@ impl<'a> Repl<'a> {
                         self.refresh_line();
                     }
                     InputMode::Normal if self.line_editor.buffer.is_empty() => {
-                        self.print(format_args!("\n"));
+                        self.finish_rendered_input();
                         self.running = false;
                     }
                     _ => {
@@ -2876,6 +3520,8 @@ impl<'a> Repl<'a> {
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
+                    self.rendered_rows = 0;
+                    self.rendered_cursor_row = 0;
                     self.refresh_line();
                 }
                 Key::CtrlA => {
@@ -2894,6 +3540,8 @@ impl<'a> Repl<'a> {
                     self.line_editor.move_right();
                     self.refresh_line();
                 }
+                Key::CtrlR => self.begin_history_search(),
+                Key::CtrlS => {}
                 Key::AltB | Key::AltLeft => {
                     self.line_editor.move_word_left();
                     self.refresh_line();
@@ -2903,19 +3551,40 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::CtrlU => {
+                    self.kill_buffer.clear();
+                    self.kill_buffer
+                        .extend_from_slice(&self.line_editor.buffer[..self.line_editor.cursor]);
                     self.line_editor.delete_to_start();
                     self.refresh_line();
                 }
                 Key::CtrlK => {
+                    self.kill_buffer.clear();
+                    self.kill_buffer
+                        .extend_from_slice(&self.line_editor.buffer[self.line_editor.cursor..]);
                     self.line_editor.delete_to_end();
                     self.refresh_line();
                 }
                 Key::CtrlW | Key::AltBackspace => {
+                    let old_cursor = self.line_editor.cursor;
+                    let old_buffer = self.line_editor.buffer.clone();
                     self.line_editor.backspace_word();
+                    self.kill_buffer.clear();
+                    self.kill_buffer
+                        .extend_from_slice(&old_buffer[self.line_editor.cursor..old_cursor]);
                     self.refresh_line();
                 }
                 Key::AltD => {
+                    let cursor = self.line_editor.cursor;
+                    let old_buffer = self.line_editor.buffer.clone();
                     self.line_editor.delete_word();
+                    let removed = old_buffer.len() - self.line_editor.buffer.len();
+                    self.kill_buffer.clear();
+                    self.kill_buffer
+                        .extend_from_slice(&old_buffer[cursor..cursor + removed]);
+                    self.refresh_line();
+                }
+                Key::CtrlY => {
+                    let _ = self.line_editor.insert_slice(&self.kill_buffer);
                     self.refresh_line();
                 }
                 Key::CtrlT => {
@@ -2931,6 +3600,10 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
+                    if self.line_editor.contains_newline() && self.line_editor.move_line_up() {
+                        self.refresh_line();
+                        continue;
+                    }
                     let cur = self.line_editor.get_line().to_vec();
                     if let Some(prev_line) = self.history.prev(&cur, self.mode) {
                         let _ = self.line_editor.set(&prev_line);
@@ -2938,6 +3611,10 @@ impl<'a> Repl<'a> {
                     }
                 }
                 Key::ArrowDown | Key::CtrlN => {
+                    if self.line_editor.contains_newline() && self.line_editor.move_line_down() {
+                        self.refresh_line();
+                        continue;
+                    }
                     if let Some(next_line) = self.history.next(self.mode) {
                         let _ = self.line_editor.set(&next_line);
                     } else {
@@ -2946,6 +3623,10 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
+                Key::AltEnter => {
+                    let _ = self.line_editor.insert(b'\n');
+                    self.refresh_line();
+                }
                 Key::Home => {
                     self.line_editor.move_to_start();
                     self.refresh_line();
@@ -2972,7 +3653,12 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
-        self.print(format_args!("\n"));
+        if self.is_tty && self.line_editor.cursor == self.line_editor.buffer.len() {
+            let line = self.line_editor.get_line().to_vec();
+            let completion = self.completion_preview(&line, self.line_editor.cursor);
+            let _ = self.line_editor.insert_slice(&completion);
+        }
+        self.finish_rendered_input();
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
@@ -3147,8 +3833,9 @@ impl<'a> Repl<'a> {
     fn handle_ctrl_c(&mut self) {
         match self.input_mode {
             InputMode::Editor => {
+                self.finish_rendered_input();
                 self.print(format_args!(
-                    "\n{}// Editor mode cancelled{}\n",
+                    "{}// Editor mode cancelled{}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -3156,24 +3843,26 @@ impl<'a> Repl<'a> {
                 self.editor_buffer.clear();
             }
             InputMode::Multiline => {
-                self.print(format_args!("\n"));
+                self.finish_rendered_input();
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
             InputMode::Normal if !self.line_editor.buffer.is_empty() => {
+                self.finish_rendered_input();
                 self.print(format_args!("^C\n"));
                 self.line_editor.clear();
             }
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
-                self.print(format_args!("\n"));
+                self.finish_rendered_input();
                 self.running = false;
                 return;
             }
             InputMode::Normal => {
                 self.ctrl_c_pressed = true;
+                self.finish_rendered_input();
                 self.print(format_args!(
-                    "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                    "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
                     Color::DIM,
                     Color::RESET
                 ));
@@ -3183,9 +3872,15 @@ impl<'a> Repl<'a> {
         self.refresh_line();
     }
 
-    /// Render a set of string completions (non-JS modes): insert the unique
-    /// match, list multiple matches, or show a count.
+    /// Insert a unique/common prefix or render the remaining candidates in columns.
     fn render_completions(&mut self, completions: &[Vec<u8>], word_start: usize) {
+        if self.is_tty {
+            self.update_terminal_width();
+        }
+        let mut completions = completions.to_vec();
+        completions.sort();
+        completions.dedup();
+
         match completions.len() {
             0 => {
                 let _ = self.line_editor.insert(b' ');
@@ -3200,25 +3895,60 @@ impl<'a> Repl<'a> {
                 let _ = self.line_editor.insert_slice(completion);
                 self.refresh_line();
             }
-            n if n <= 50 => {
-                self.print(format_args!("\n"));
-                for m in completions {
-                    self.print(format_args!(
-                        "  {}{}{}\n",
-                        Color::CYAN,
-                        BStr::new(m),
-                        Color::RESET
-                    ));
+            _ => {
+                let prefix_len = completions.iter().skip(1).fold(
+                    completions[0].len(),
+                    |prefix_len, completion| {
+                        completions[0][..prefix_len]
+                            .iter()
+                            .zip(completion)
+                            .take_while(|(left, right)| left == right)
+                            .count()
+                    },
+                );
+                let typed_len = self.line_editor.cursor.saturating_sub(word_start);
+                if prefix_len > typed_len {
+                    let _ = self
+                        .line_editor
+                        .insert_slice(&completions[0][typed_len..prefix_len]);
+                    self.refresh_line();
+                    return;
                 }
-                self.refresh_line();
-            }
-            n => {
-                self.print(format_args!(
-                    "\n{}{} completions{}\n",
-                    Color::DIM,
-                    n,
-                    Color::RESET
-                ));
+
+                self.finish_rendered_input();
+                let max_width = completions
+                    .iter()
+                    .map(|completion| {
+                        strings::visible::width::exclude_ansi_colors::utf8(completion)
+                    })
+                    .max()
+                    .unwrap_or(0);
+                let column_width = max_width.saturating_add(2).max(1);
+                let columns = (usize::from(self.terminal_width.max(1)) / column_width)
+                    .max(1)
+                    .min(completions.len());
+                for row in completions.chunks(columns) {
+                    for (column, completion) in row.iter().enumerate() {
+                        if self.use_colors {
+                            self.print(format_args!(
+                                "{}{}{}",
+                                Color::CYAN,
+                                BStr::new(completion),
+                                Color::RESET
+                            ));
+                        } else {
+                            self.write(completion);
+                        }
+                        if column + 1 < row.len() {
+                            let width =
+                                strings::visible::width::exclude_ansi_colors::utf8(completion);
+                            for _ in width..column_width {
+                                self.write(b" ");
+                            }
+                        }
+                    }
+                    self.write(b"\r\n");
+                }
                 self.refresh_line();
             }
         }
@@ -3227,32 +3957,28 @@ impl<'a> Repl<'a> {
     fn handle_tab(&mut self) {
         // Note: reshaped for borrowck — copy line out
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        let cursor = self.line_editor.cursor.min(line.len());
+        let before_cursor = &line[..cursor];
 
         // Complete REPL commands
-        if !line.is_empty() && line[0] == b'.' {
-            let mut matches: Vec<&'static [u8]> = Vec::new();
+        if !before_cursor.is_empty() && before_cursor[0] == b'.' {
+            let mut matches: Vec<Vec<u8>> = Vec::new();
 
             for cmd in &ReplCommand::ALL {
-                if cmd.name.starts_with(&line[..]) {
-                    matches.push(cmd.name);
+                if cmd.name.starts_with(before_cursor) {
+                    matches.push(cmd.name.to_vec());
                 }
             }
 
             if matches.len() == 1 {
-                let _ = self.line_editor.set(matches[0]);
+                while self.line_editor.cursor > 0 {
+                    self.line_editor.backspace();
+                }
+                let _ = self.line_editor.insert_slice(&matches[0]);
                 let _ = self.line_editor.insert(b' ');
                 self.refresh_line();
-            } else if matches.len() > 1 {
-                self.print(format_args!("\n"));
-                for m in &matches {
-                    self.print(format_args!(
-                        "  {}{}{}\n",
-                        Color::CYAN,
-                        BStr::new(m),
-                        Color::RESET
-                    ));
-                }
-                self.refresh_line();
+            } else {
+                self.render_completions(&matches, 0);
             }
             return;
         }
@@ -3268,7 +3994,7 @@ impl<'a> Repl<'a> {
         };
 
         // Find the word being completed
-        let mut word_start: usize = line.len();
+        let mut word_start: usize = cursor;
         while word_start > 0 {
             let c = line[word_start - 1];
             if !c.is_ascii_alphanumeric() && c != b'_' && c != b'$' {
@@ -3277,16 +4003,19 @@ impl<'a> Repl<'a> {
             word_start -= 1;
         }
 
-        let prefix = &line[word_start..];
+        let prefix = &line[word_start..cursor];
+        let receiver = completion_receiver(&line, word_start);
 
         // Non-JS modes: complete from per-language word lists / the Python
-        // REPL scope. This also handles the "property" case where the word
-        // follows `.` — the prefix scan above stops at `.`, so `obj.foo` has
-        // prefix `foo`; we complete from the same static lists (attribute
-        // completion is a later refinement).
+        // REPL scope.
         if self.mode != ReplMode::Js {
             let completions = match self.mode {
-                ReplMode::Python => python_completions(prefix),
+                ReplMode::Python => {
+                    let completion_prefix = receiver
+                        .map(|(start, _)| &line[start..cursor])
+                        .unwrap_or(prefix);
+                    python_completions(completion_prefix)
+                }
                 ReplMode::Shell => shell_completions(prefix),
                 ReplMode::Sql => sql_completions(prefix),
                 ReplMode::C => c_completions(prefix),
@@ -3296,101 +4025,20 @@ impl<'a> Repl<'a> {
             return;
         }
 
-        // Get completions from global object
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
-        // are valid for the duration of the call.
-        let completions = unsafe {
-            Bun__REPL__getCompletions(global, JSValue::UNDEFINED, prefix.as_ptr(), prefix.len())
-        };
-
-        if completions.is_undefined() || !completions.is_array() {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
-            return;
-        }
-
-        // Get array length
-        let len = match completions.get_length(global) {
-            Ok(n) => n,
-            Err(_) => {
-                global.clear_exception();
-                0
-            }
-        };
-        if len == 0 {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
-            return;
-        }
-
-        if len == 1 {
-            // Single completion - insert it
-            let item = match completions.get_index(global, 0) {
-                Ok(v) => v,
-                Err(_) => {
-                    global.clear_exception();
-                    JSValue::UNDEFINED
+        let target = if let Some((_, expression)) = receiver {
+            match resolve_js_completion_target(global, expression) {
+                Some(target) => target,
+                None => {
+                    self.render_completions(&[], word_start);
+                    return;
                 }
-            };
-            if item.is_string() {
-                let slice = match item.to_slice(global) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        global.clear_exception();
-                        return;
-                    }
-                };
-                let completion = slice.slice();
-                // Replace the prefix with the completion
-                while self.line_editor.cursor > word_start {
-                    self.line_editor.backspace();
-                }
-                let _ = self.line_editor.insert_slice(completion);
-                self.refresh_line();
             }
-        } else if len <= 50 {
-            // Multiple completions - show them
-            self.print(format_args!("\n"));
-            let mut i: u32 = 0;
-            while i < (len as u32) {
-                let item = match completions.get_index(global, i) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        global.clear_exception();
-                        JSValue::UNDEFINED
-                    }
-                };
-                if item.is_string() {
-                    match item.to_slice(global) {
-                        Ok(slice) => {
-                            self.print(format_args!(
-                                "  {}{}{}\n",
-                                Color::CYAN,
-                                BStr::new(slice.slice()),
-                                Color::RESET
-                            ));
-                        }
-                        Err(_) => {
-                            global.clear_exception();
-                            i += 1;
-                            continue;
-                        }
-                    }
-                }
-                i += 1;
-            }
-            self.refresh_line();
         } else {
-            self.print(format_args!(
-                "\n{}{} completions{}\n",
-                Color::DIM,
-                len,
-                Color::RESET
-            ));
-            self.refresh_line();
-        }
+            JSValue::UNDEFINED
+        };
+
+        let candidates = js_completion_candidates(global, target, prefix);
+        self.render_completions(&candidates, word_start);
     }
 }
 
@@ -3585,54 +4233,316 @@ fn filter_completions<'a>(words: &'a [&'static str], prefix: &[u8]) -> Vec<Vec<u
     out
 }
 
-/// Sorted keyword list for the lightweight per-language highlighter.
-/// `binary_search` requires ascending order.
-fn keywords_for_mode(mode: ReplMode) -> &'static [&'static [u8]] {
-    match mode {
-        ReplMode::Python => &[
-            b"False", b"None", b"True", b"and", b"as", b"assert", b"async", b"await", b"break",
-            b"class", b"continue", b"def", b"del", b"elif", b"else", b"except", b"finally",
-            b"for", b"from", b"global", b"if", b"import", b"in", b"is", b"lambda", b"nonlocal",
-            b"not", b"or", b"pass", b"raise", b"return", b"try", b"while", b"with", b"yield",
-        ],
-        ReplMode::Shell => &[
-            b"alias", b"bg", b"break", b"builtin", b"case", b"cd", b"command", b"continue",
-            b"do", b"done", b"echo", b"elif", b"else", b"esac", b"eval", b"exec", b"exit",
-            b"export", b"fg", b"fi", b"for", b"function", b"getopts", b"hash", b"help",
-            b"history", b"if", b"jobs", b"kill", b"let", b"local", b"read", b"readonly",
-            b"return", b"select", b"set", b"shift", b"source", b"test", b"then", b"time",
-            b"times", b"trap", b"type", b"ulimit", b"umask", b"unalias", b"unset", b"until",
-            b"wait", b"while",
-        ],
-        ReplMode::Sql => &[
-            b"ABORT", b"ACTION", b"ADD", b"AFTER", b"ALL", b"ALTER", b"ANALYZE", b"AND",
-            b"AS", b"ASC", b"ATTACH", b"AUTOINCREMENT", b"BEFORE", b"BEGIN", b"BETWEEN",
-            b"BY", b"CASCADE", b"CASE", b"CAST", b"CHECK", b"COLLATE", b"COLUMN", b"COMMIT",
-            b"CONFLICT", b"CONSTRAINT", b"CREATE", b"CROSS", b"CURRENT", b"DATABASE",
-            b"DEFAULT", b"DEFERRABLE", b"DEFERRED", b"DELETE", b"DESC", b"DETACH",
-            b"DISTINCT", b"DROP", b"EACH", b"ELSE", b"END", b"ESCAPE", b"EXCEPT",
-            b"EXCLUSIVE", b"EXISTS", b"EXPLAIN", b"FAIL", b"FOR", b"FOREIGN", b"FROM",
-            b"FULL", b"GLOB", b"GROUP", b"HAVING", b"IF", b"IGNORE", b"IMMEDIATE", b"IN",
-            b"INDEX", b"INDEXED", b"INITIALLY", b"INNER", b"INSERT", b"INSTEAD",
-            b"INTERSECT", b"INTO", b"IS", b"ISNULL", b"JOIN", b"KEY", b"LEFT", b"LIKE",
-            b"LIMIT", b"MATCH", b"NATURAL", b"NO", b"NOT", b"NOTNULL", b"NULL", b"OF",
-            b"OFFSET", b"ON", b"OR", b"ORDER", b"OUTER", b"PARTITION", b"PLAN", b"PRAGMA",
-            b"PRIMARY", b"QUERY", b"RAISE", b"RECURSIVE", b"REFERENCES", b"REGEXP",
-            b"REINDEX", b"RELEASE", b"RENAME", b"REPLACE", b"RESTRICT", b"RIGHT",
-            b"ROLLBACK", b"ROW", b"SAVEPOINT", b"SELECT", b"SET", b"TABLE", b"TEMP",
-            b"TEMPORARY", b"THEN", b"TO", b"TRANSACTION", b"TRIGGER", b"UNION", b"UNIQUE",
-            b"UPDATE", b"USING", b"VACUUM", b"VALUES", b"VIEW", b"VIRTUAL", b"WHEN",
-            b"WHERE", b"WITH", b"WITHOUT",
-        ],
-        ReplMode::C => &[
-            b"auto", b"break", b"case", b"char", b"const", b"continue", b"default", b"do",
-            b"double", b"else", b"enum", b"extern", b"float", b"for", b"goto", b"if",
-            b"inline", b"int", b"long", b"register", b"restrict", b"return", b"short",
-            b"signed", b"sizeof", b"static", b"struct", b"switch", b"typedef", b"union",
-            b"unsigned", b"void", b"volatile", b"while",
-        ],
-        ReplMode::Js => &[],
+fn completion_receiver(line: &[u8], word_start: usize) -> Option<(usize, &[u8])> {
+    let receiver_end = word_start.checked_sub(1)?;
+    if line.get(receiver_end) != Some(&b'.') {
+        return None;
     }
+
+    let mut receiver_start = receiver_end;
+    while receiver_start > 0 {
+        let ch = line[receiver_start - 1];
+        if ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'$' | b'.') {
+            receiver_start -= 1;
+        } else {
+            break;
+        }
+    }
+
+    let expression = &line[receiver_start..receiver_end];
+    if expression.is_empty()
+        || expression.split(|ch| *ch == b'.').any(|segment| {
+            segment.is_empty()
+                || !matches!(segment[0], b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$')
+                || !segment
+                    .iter()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'$'))
+        })
+    {
+        return None;
+    }
+
+    Some((receiver_start, expression))
+}
+
+fn resolve_js_completion_target(global: &JSGlobalObject, expression: &[u8]) -> Option<JSValue> {
+    let mut target = global.to_js_value();
+    for property in expression.split(|ch| *ch == b'.') {
+        target = match target.get(global, property) {
+            Ok(Some(value)) => value,
+            Ok(None) => return None,
+            Err(_) => {
+                global.clear_exception();
+                return None;
+            }
+        };
+    }
+    Some(target)
+}
+
+fn js_completion_candidates(
+    global: &JSGlobalObject,
+    target: JSValue,
+    prefix: &[u8],
+) -> Vec<Vec<u8>> {
+    // SAFETY: `global` is live and `prefix` remains valid for the duration of the call.
+    let completions =
+        unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
+    if completions.is_undefined() || !completions.is_array() {
+        return Vec::new();
+    }
+
+    let len = match completions.get_length(global) {
+        Ok(len) => len,
+        Err(_) => {
+            global.clear_exception();
+            return Vec::new();
+        }
+    };
+    let mut candidates = Vec::new();
+    for index in 0..len {
+        let item = match completions.get_index(global, index as u32) {
+            Ok(item) => item,
+            Err(_) => {
+                global.clear_exception();
+                continue;
+            }
+        };
+        if !item.is_string() {
+            continue;
+        }
+        match item.to_slice(global) {
+            Ok(slice) => candidates.push(slice.slice().to_vec()),
+            Err(_) => global.clear_exception(),
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn common_completion_suffix(candidates: &[Vec<u8>], typed_len: usize) -> Vec<u8> {
+    let Some(first) = candidates.first() else {
+        return Vec::new();
+    };
+    let prefix_len = candidates
+        .iter()
+        .skip(1)
+        .fold(first.len(), |len, candidate| {
+            first[..len]
+                .iter()
+                .zip(candidate)
+                .take_while(|(left, right)| left == right)
+                .count()
+        });
+    if prefix_len <= typed_len {
+        return Vec::new();
+    }
+    first[typed_len..prefix_len].to_vec()
+}
+
+fn is_safe_js_preview_expression(code: &[u8]) -> bool {
+    if code.is_empty() || code.len() > 512 || code.contains(&b'\n') || code.contains(&b'\r') {
+        return false;
+    }
+
+    let mut index = 0usize;
+    let mut quote = 0u8;
+    let mut escaped = false;
+    while index < code.len() {
+        let ch = code[index];
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if ch == quote {
+                quote = 0;
+            }
+            index += 1;
+            continue;
+        }
+
+        if matches!(ch, b'\'' | b'"') {
+            quote = ch;
+            index += 1;
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || matches!(ch, b'_' | b'$') {
+            let start = index;
+            index += 1;
+            while index < code.len()
+                && (code[index].is_ascii_alphanumeric() || matches!(code[index], b'_' | b'$'))
+            {
+                index += 1;
+            }
+            if !matches!(
+                &code[start..index],
+                b"true"
+                    | b"false"
+                    | b"null"
+                    | b"undefined"
+                    | b"NaN"
+                    | b"Infinity"
+                    | b"typeof"
+                    | b"void"
+            ) {
+                return false;
+            }
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            index += 1;
+            while index < code.len()
+                && (code[index].is_ascii_alphanumeric() || matches!(code[index], b'.' | b'_'))
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if !ch.is_ascii_whitespace()
+            && !matches!(
+                ch,
+                b'.' | b'+'
+                    | b'-'
+                    | b'*'
+                    | b'/'
+                    | b'%'
+                    | b'('
+                    | b')'
+                    | b'<'
+                    | b'>'
+                    | b'!'
+                    | b'='
+                    | b'&'
+                    | b'|'
+                    | b'?'
+                    | b':'
+                    | b','
+                    | b'~'
+            )
+        {
+            return false;
+        }
+        index += 1;
+    }
+    if quote != 0 {
+        return false;
+    }
+
+    for (index, ch) in code.iter().copied().enumerate() {
+        if ch == b'+' && code.get(index + 1) == Some(&b'+')
+            || ch == b'-' && code.get(index + 1) == Some(&b'-')
+            || ch == b'=' && code.get(index + 1) == Some(&b'>')
+        {
+            return false;
+        }
+        if ch == b'=' {
+            let previous = index.checked_sub(1).and_then(|i| code.get(i)).copied();
+            let next = code.get(index + 1).copied();
+            if !matches!(previous, Some(b'=' | b'!' | b'<' | b'>')) && next != Some(b'=') {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn code_assigns_identifier(code: &[u8], identifier: &[u8]) -> bool {
+    let mut index = 0usize;
+    let mut quote = 0u8;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+
+    while index < code.len() {
+        let ch = code[index];
+        if line_comment {
+            if ch == b'\n' {
+                line_comment = false;
+            }
+            index += 1;
+            continue;
+        }
+        if block_comment {
+            if ch == b'*' && code.get(index + 1) == Some(&b'/') {
+                block_comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if ch == quote {
+                quote = 0;
+            }
+            index += 1;
+            continue;
+        }
+        if matches!(ch, b'\'' | b'"' | b'`') {
+            quote = ch;
+            index += 1;
+            continue;
+        }
+        if ch == b'/' && code.get(index + 1) == Some(&b'/') {
+            line_comment = true;
+            index += 2;
+            continue;
+        }
+        if ch == b'/' && code.get(index + 1) == Some(&b'*') {
+            block_comment = true;
+            index += 2;
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || matches!(ch, b'_' | b'$') {
+            let start = index;
+            index += 1;
+            while index < code.len()
+                && (code[index].is_ascii_alphanumeric() || matches!(code[index], b'_' | b'$'))
+            {
+                index += 1;
+            }
+            if &code[start..index] != identifier {
+                continue;
+            }
+
+            let mut next = index;
+            while code.get(next).is_some_and(u8::is_ascii_whitespace) {
+                next += 1;
+            }
+            if code.get(next) == Some(&b'=') && !matches!(code.get(next + 1), Some(b'=' | b'>')) {
+                return true;
+            }
+            if matches!(code.get(next), Some(b'+' | b'-'))
+                && (code.get(next + 1) == Some(&b'=') || code.get(next + 1) == code.get(next))
+            {
+                return true;
+            }
+            if matches!(
+                code.get(next),
+                Some(b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'?')
+            ) && (code.get(next + 1) == Some(&b'=') || code.get(next + 2) == Some(&b'='))
+            {
+                return true;
+            }
+
+            let mut previous = start;
+            while previous > 0 && code[previous - 1].is_ascii_whitespace() {
+                previous -= 1;
+            }
+            if previous >= 2 && matches!(&code[previous - 2..previous], b"++" | b"--") {
+                return true;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    false
 }
 
 /// Python: names in the persistent REPL scope (via the embedded RustPython
@@ -3653,13 +4563,13 @@ fn python_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
 /// need an fs walk per keystroke).
 fn shell_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
     const WORDS: &[&str] = &[
-        "alias", "bg", "break", "builtin", "case", "cd", "command", "continue", "cp", "curl",
-        "do", "done", "echo", "elif", "else", "env", "esac", "eval", "exec", "exit", "export",
-        "fg", "fi", "for", "function", "getopts", "grep", "hash", "help", "history", "if",
-        "jobs", "kill", "let", "local", "ls", "man", "mkdir", "mv", "pwd", "read", "readonly",
-        "return", "rm", "sed", "select", "set", "shift", "source", "sudo", "tar", "test",
-        "then", "time", "times", "trap", "type", "ulimit", "umask", "unalias", "unset",
-        "until", "wait", "wc", "while", "wget", "which",
+        "alias", "bg", "break", "builtin", "case", "cd", "command", "continue", "cp", "curl", "do",
+        "done", "echo", "elif", "else", "env", "esac", "eval", "exec", "exit", "export", "fg",
+        "fi", "for", "function", "getopts", "grep", "hash", "help", "history", "if", "jobs",
+        "kill", "let", "local", "ls", "man", "mkdir", "mv", "pwd", "read", "readonly", "return",
+        "rm", "sed", "select", "set", "shift", "source", "sudo", "tar", "test", "then", "time",
+        "times", "trap", "type", "ulimit", "umask", "unalias", "unset", "until", "wait", "wc",
+        "while", "wget", "which",
     ];
     filter_completions(WORDS, prefix)
 }
@@ -3667,21 +4577,136 @@ fn shell_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
 /// SQL: SQLite-flavored keywords + common functions.
 fn sql_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
     const WORDS: &[&str] = &[
-        "ABORT", "ACTION", "ADD", "AFTER", "ALL", "ALTER", "ANALYZE", "AND", "AS", "ASC",
-        "ATTACH", "AUTOINCREMENT", "BEFORE", "BEGIN", "BETWEEN", "BY", "CASCADE", "CASE",
-        "CAST", "CHECK", "COLLATE", "COLUMN", "COMMIT", "CONFLICT", "CONSTRAINT", "CREATE",
-        "CROSS", "CURRENT", "DATABASE", "DEFAULT", "DEFERRABLE", "DEFERRED", "DELETE", "DESC",
-        "DETACH", "DISTINCT", "DROP", "EACH", "ELSE", "END", "ESCAPE", "EXCEPT", "EXCLUSIVE",
-        "EXISTS", "EXPLAIN", "FAIL", "FOR", "FOREIGN", "FROM", "FULL", "GLOB", "GROUP",
-        "HAVING", "IF", "IGNORE", "IMMEDIATE", "IN", "INDEX", "INDEXED", "INITIALLY", "INNER",
-        "INSERT", "INSTEAD", "INTERSECT", "INTO", "IS", "ISNULL", "JOIN", "KEY", "LEFT",
-        "LIKE", "LIMIT", "MATCH", "NATURAL", "NO", "NOT", "NOTNULL", "NULL", "OF", "OFFSET",
-        "ON", "OR", "ORDER", "OUTER", "PARTITION", "PLAN", "PRAGMA", "PRIMARY", "QUERY",
-        "RAISE", "RECURSIVE", "REFERENCES", "REGEXP", "REINDEX", "RELEASE", "RENAME",
-        "REPLACE", "RESTRICT", "RIGHT", "ROLLBACK", "ROW", "SAVEPOINT", "SELECT", "SET",
-        "TABLE", "TEMP", "TEMPORARY", "THEN", "TO", "TRANSACTION", "TRIGGER", "UNION",
-        "UNIQUE", "UPDATE", "USING", "VACUUM", "VALUES", "VIEW", "VIRTUAL", "WHEN", "WHERE",
-        "WITH", "WITHOUT", "avg", "count", "group_concat", "max", "min", "sum", "total",
+        "ABORT",
+        "ACTION",
+        "ADD",
+        "AFTER",
+        "ALL",
+        "ALTER",
+        "ANALYZE",
+        "AND",
+        "AS",
+        "ASC",
+        "ATTACH",
+        "AUTOINCREMENT",
+        "BEFORE",
+        "BEGIN",
+        "BETWEEN",
+        "BY",
+        "CASCADE",
+        "CASE",
+        "CAST",
+        "CHECK",
+        "COLLATE",
+        "COLUMN",
+        "COMMIT",
+        "CONFLICT",
+        "CONSTRAINT",
+        "CREATE",
+        "CROSS",
+        "CURRENT",
+        "DATABASE",
+        "DEFAULT",
+        "DEFERRABLE",
+        "DEFERRED",
+        "DELETE",
+        "DESC",
+        "DETACH",
+        "DISTINCT",
+        "DROP",
+        "EACH",
+        "ELSE",
+        "END",
+        "ESCAPE",
+        "EXCEPT",
+        "EXCLUSIVE",
+        "EXISTS",
+        "EXPLAIN",
+        "FAIL",
+        "FOR",
+        "FOREIGN",
+        "FROM",
+        "FULL",
+        "GLOB",
+        "GROUP",
+        "HAVING",
+        "IF",
+        "IGNORE",
+        "IMMEDIATE",
+        "IN",
+        "INDEX",
+        "INDEXED",
+        "INITIALLY",
+        "INNER",
+        "INSERT",
+        "INSTEAD",
+        "INTERSECT",
+        "INTO",
+        "IS",
+        "ISNULL",
+        "JOIN",
+        "KEY",
+        "LEFT",
+        "LIKE",
+        "LIMIT",
+        "MATCH",
+        "NATURAL",
+        "NO",
+        "NOT",
+        "NOTNULL",
+        "NULL",
+        "OF",
+        "OFFSET",
+        "ON",
+        "OR",
+        "ORDER",
+        "OUTER",
+        "PARTITION",
+        "PLAN",
+        "PRAGMA",
+        "PRIMARY",
+        "QUERY",
+        "RAISE",
+        "RECURSIVE",
+        "REFERENCES",
+        "REGEXP",
+        "REINDEX",
+        "RELEASE",
+        "RENAME",
+        "REPLACE",
+        "RESTRICT",
+        "RIGHT",
+        "ROLLBACK",
+        "ROW",
+        "SAVEPOINT",
+        "SELECT",
+        "SET",
+        "TABLE",
+        "TEMP",
+        "TEMPORARY",
+        "THEN",
+        "TO",
+        "TRANSACTION",
+        "TRIGGER",
+        "UNION",
+        "UNIQUE",
+        "UPDATE",
+        "USING",
+        "VACUUM",
+        "VALUES",
+        "VIEW",
+        "VIRTUAL",
+        "WHEN",
+        "WHERE",
+        "WITH",
+        "WITHOUT",
+        "avg",
+        "count",
+        "group_concat",
+        "max",
+        "min",
+        "sum",
+        "total",
     ];
     filter_completions(WORDS, prefix)
 }
@@ -3689,15 +4714,80 @@ fn sql_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
 /// C: keywords + common stdlib function names.
 fn c_completions(prefix: &[u8]) -> Vec<Vec<u8>> {
     const WORDS: &[&str] = &[
-        "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
-        "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
-        "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
-        "switch", "typedef", "union", "unsigned", "void", "volatile", "while", "_Bool",
-        "_Complex", "_Imaginary", "printf", "scanf", "fprintf", "fscanf", "sprintf", "strlen",
-        "strcmp", "strcpy", "strcat", "memcpy", "memset", "malloc", "calloc", "realloc",
-        "free", "abs", "fabs", "sqrt", "pow", "floor", "ceil", "rand", "srand", "exit",
-        "atoi", "atof", "getchar", "putchar", "puts", "fopen", "fclose", "fgets", "fputs",
-        "NULL", "stdin", "stdout", "stderr",
+        "auto",
+        "break",
+        "case",
+        "char",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "double",
+        "else",
+        "enum",
+        "extern",
+        "float",
+        "for",
+        "goto",
+        "if",
+        "inline",
+        "int",
+        "long",
+        "register",
+        "restrict",
+        "return",
+        "short",
+        "signed",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "typedef",
+        "union",
+        "unsigned",
+        "void",
+        "volatile",
+        "while",
+        "_Bool",
+        "_Complex",
+        "_Imaginary",
+        "printf",
+        "scanf",
+        "fprintf",
+        "fscanf",
+        "sprintf",
+        "strlen",
+        "strcmp",
+        "strcpy",
+        "strcat",
+        "memcpy",
+        "memset",
+        "malloc",
+        "calloc",
+        "realloc",
+        "free",
+        "abs",
+        "fabs",
+        "sqrt",
+        "pow",
+        "floor",
+        "ceil",
+        "rand",
+        "srand",
+        "exit",
+        "atoi",
+        "atof",
+        "getchar",
+        "putchar",
+        "puts",
+        "fopen",
+        "fclose",
+        "fgets",
+        "fputs",
+        "NULL",
+        "stdin",
+        "stdout",
+        "stderr",
     ];
     filter_completions(WORDS, prefix)
 }

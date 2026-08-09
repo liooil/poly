@@ -53,12 +53,19 @@ import { python } from "poly";
 ```text
 poly run app.ts        # 运行 TypeScript 入口
 poly run tool.py       # 运行 Python 入口
+poly repl python       # 直接进入 Python REPL 模式
 poly sync              # 解析两个生态的依赖
 poly build app.ts      # 生成独立应用
 ```
 
-`poly run` 的入口分派属于当前原型。静态跨语言 import、`poly sync` 和
-`poly build` 尚未实现。
+`poly run` 的入口分派和多语言 REPL 属于当前原型。静态跨语言 import、
+`poly sync` 和 `poly build` 尚未实现。
+
+REPL history 由所有语言共享。回看其他模式的记录时会显示为 `.py value = 42`
+这样的 inline 命令，从而仍在最初录入它的语言中执行。
+
+JavaScript、Python、Shell、SQL 和 C 模式均提供各自的交互式语法高亮，包括该
+语言的字符串、注释、数值、关键字，以及变量展开或预处理指令等专有结构。
 
 ## 一个项目，两个生态
 

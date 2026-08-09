@@ -47,19 +47,22 @@ async function withTerminalRepl(
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
+    rawOutput: () => string;
   }) => Promise<void>,
   options: {
     args?: string[];
-    env?: Record<string, string>;
+    env?: Record<string, string | undefined>;
+    startupTimeoutMs?: number;
+    cols?: number;
   } = {},
 ) {
-  const { args = [], env = {} } = options;
+  const { args = [], env = {}, startupTimeoutMs = 5000, cols = 120 } = options;
   const received: string[] = [];
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
   await using terminal = new Bun.Terminal({
-    cols: 120,
+    cols,
     rows: 40,
     data(_term, data) {
       const str = Buffer.from(data).toString();
@@ -109,10 +112,11 @@ async function withTerminalRepl(
   };
 
   const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
 
-  await waitFor(/\u276f|> /); // Wait for prompt
+  await waitFor(/\u276f|> /, startupTimeoutMs); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, allOutput });
+  await fn({ terminal, proc, send, waitFor, allOutput, rawOutput });
 
   // Clean exit
   send(".exit\n");
@@ -192,9 +196,7 @@ describe.concurrent("Bun REPL", () => {
     const { stdout, stderr, exitCode } = await runRepl("", { args: ["ruby"] });
 
     expect(stdout).toBe("");
-    expect(stripAnsi(stderr)).toBe(
-      "error: Unknown REPL mode \"ruby\". Expected one of: js, python, shell, sql, c.\n",
-    );
+    expect(stripAnsi(stderr)).toBe('error: Unknown REPL mode "ruby". Expected one of: js, python, shell, sql, c.\n');
     expect(exitCode).toBe(1);
   });
 
@@ -210,9 +212,7 @@ describe.concurrent("Bun REPL", () => {
     const { stdout, stderr, exitCode } = await runRepl("", { args: ["python", flag, "1 + 1"] });
 
     expect(stdout).toBe("");
-    expect(stripAnsi(stderr)).toBe(
-      "error: --eval and --print are only supported in JavaScript REPL mode.\n",
-    );
+    expect(stripAnsi(stderr)).toBe("error: --eval and --print are only supported in JavaScript REPL mode.\n");
     expect(exitCode).toBe(1);
   });
 
@@ -260,15 +260,41 @@ describe.concurrent("Bun REPL", () => {
     using dir = tempDir("repl-unified-history", {});
     const home = String(dir);
 
-    const result = await runRepl(
-      ["40 + 2", ".py", "py_value = 42", "def answer():", "    return 42", "", ".exit"],
-      { env: { HOME: home } },
-    );
+    const result = await runRepl(["40 + 2", ".py", "py_value = 42", "def answer():", "    return 42", "", ".exit"], {
+      env: { HOME: home },
+    });
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     expect(await Bun.file(path.join(home, ".bun_repl_history")).text()).toBe(
-      ".js 40 + 2\n.py py_value = 42\n.py def answer():\n.py     return 42\n",
+      ".js 40 + 2\n.py py_value = 42\n.py def answer():\n.py|     return 42\n",
     );
+  }, 10_000);
+
+  test("honors NODE_REPL_HISTORY and NODE_REPL_HISTORY_SIZE", async () => {
+    using dir = tempDir("repl-configured-history", {});
+    const historyPath = path.join(String(dir), "custom.history");
+    const result = await runRepl(["1", "2", "3", ".exit"], {
+      env: {
+        HOME: String(dir),
+        NODE_REPL_HISTORY: historyPath,
+        NODE_REPL_HISTORY_SIZE: "2",
+      },
+    });
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(historyPath).text()).toBe(".js 2\n.js 3\n");
+    expect(await Bun.file(path.join(String(dir), ".bun_repl_history")).exists()).toBe(false);
+  });
+
+  test("an empty NODE_REPL_HISTORY disables persistence", async () => {
+    using dir = tempDir("repl-disabled-history", {});
+    const result = await runRepl(["40 + 2", ".exit"], {
+      env: { HOME: String(dir), NODE_REPL_HISTORY: "" },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), ".bun_repl_history")).exists()).toBe(false);
   });
 
   describe("basic evaluation", () => {
@@ -332,6 +358,52 @@ describe.concurrent("Bun REPL", () => {
     test("_error contains last error", async () => {
       const { stdout, exitCode } = await runRepl(["throw new Error('test error')", "_error.message", ".exit"]);
       expect(stripAnsi(stdout)).toContain("test error");
+      expect(exitCode).toBe(0);
+    });
+
+    test("assigning _ disables automatic last-result updates", async () => {
+      const { stdout, exitCode } = await runRepl(["_ = 7", "40 + 2", "_", ".exit"]);
+      const output = stripAnsi(stdout);
+
+      expect(output).toContain("Expression assignment to _ now disabled.");
+      expect(output.match(/Expression assignment to _ now disabled\./g)).toHaveLength(1);
+      expect(output).toMatch(/> _\r+\n7\n/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("assigning _error preserves the user value across later errors", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "_error = new Error('mine')",
+        "throw new Error('other')",
+        "_error.message",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout + stderr);
+
+      expect(output).toContain("Expression assignment to _error now disabled.");
+      expect(output).toContain("other");
+      expect(output).toContain("mine");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("strict mode", () => {
+    test("NODE_REPL_MODE=strict rejects implicit globals", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["strictLeak = 42", ".exit"], {
+        env: { NODE_REPL_MODE: "strict" },
+      });
+
+      expect(stripAnsi(stdout + stderr)).toMatch(/strictLeak is not defined|ReferenceError/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("NODE_REPL_MODE=sloppy keeps implicit globals", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["sloppyLeak = 42", "sloppyLeak", ".exit"], {
+        env: { NODE_REPL_MODE: "sloppy" },
+      });
+
+      expect(stderr).toBe("");
+      expect(stripAnsi(stdout)).toContain("42");
       expect(exitCode).toBe(0);
     });
   });
@@ -434,6 +506,14 @@ describe.concurrent("Bun REPL", () => {
     test(".break on empty multiline recovers prompt", async () => {
       const { stdout, exitCode } = await runRepl(["{", ".break", "99", ".exit"]);
       expect(stripAnsi(stdout)).toContain("99");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".clear cancels pending input without clearing the terminal", async () => {
+      const { stdout, exitCode } = await runRepl(["{", ".clear", "40 + 2", ".exit"]);
+
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(stdout).not.toContain("\x1b[2J");
       expect(exitCode).toBe(0);
     });
 
@@ -1107,6 +1187,99 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test.each([
+    [
+      "JavaScript",
+      [],
+      'const answer = 42; const text = "ok"; // note',
+      "\x1b[35mconst\x1b[0m",
+      "\x1b[33m42\x1b[0m",
+      '\x1b[32m"ok"\x1b[0m',
+      "\x1b[2m// note\x1b[0m",
+    ],
+    [
+      "Python",
+      ["python"],
+      '@cache async def answer(value: int = 0x2a) -> str: return f"""{value}""" # note',
+      "\x1b[36m@cache\x1b[0m",
+      "\x1b[35masync\x1b[0m",
+      '\x1b[32mf"""{value}"""\x1b[0m',
+      "\x1b[2m# note\x1b[0m",
+    ],
+    [
+      "Shell",
+      ["shell"],
+      'if test -n "${HOME}"; then echo "$(pwd)" 2>>log # note',
+      "\x1b[35mif\x1b[0m",
+      "\x1b[36m${HOME}\x1b[0m",
+      "\x1b[33m2>>\x1b[0m",
+      "\x1b[2m# note\x1b[0m",
+    ],
+    [
+      "SQL",
+      ["sql"],
+      'select count(*) from "users" where id = :id -- note',
+      "\x1b[35mselect\x1b[0m",
+      "\x1b[34mcount\x1b[0m",
+      "\x1b[36m:id\x1b[0m",
+      "\x1b[2m-- note\x1b[0m",
+    ],
+    [
+      "C",
+      ["c"],
+      '#define VALUE ((const char *)u8"ok") // note',
+      "\x1b[35m#define\x1b[0m",
+      "\x1b[34mchar\x1b[0m",
+      '\x1b[32mu8"ok"\x1b[0m',
+      "\x1b[2m// note\x1b[0m",
+    ],
+  ])(
+    "%s mode applies language-specific syntax highlighting",
+    async (_language, args, input, firstToken, secondToken, thirdToken, commentToken) => {
+      using dir = tempDir("repl-syntax-highlighting", {});
+      await withTerminalRepl(
+        async ({ send, waitFor, rawOutput }) => {
+          send(input);
+          await waitFor("note");
+
+          const output = rawOutput();
+          expect(stripAnsi(output)).toContain(input);
+          expect(output).toContain(firstToken);
+          expect(output).toContain(secondToken);
+          expect(output).toContain(thirdToken);
+          expect(output).toContain(commentToken);
+
+          send("\x03");
+          await waitFor(/\u276f|> /);
+        },
+        { args, env: { HOME: String(dir), NO_COLOR: undefined } },
+      );
+    },
+  );
+
+  test("syntax highlighting remains enabled for input longer than 2048 bytes", async () => {
+    const input = `return ${Buffer.alloc(2049, "x").toString()}`;
+    expect(input.length).toBeGreaterThan(2048);
+    using dir = tempDir("repl-long-syntax-highlighting", {
+      ".bun_repl_history": `.py ${input}\n`,
+    });
+
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("\x1b[A");
+        const output = await waitFor("\x1b[35mreturn\x1b[0m");
+        expect(output).toContain("\x1b[35mreturn\x1b[0m");
+
+        send("\x03");
+        await waitFor(/\u276f|> /);
+      },
+      {
+        args: ["python"],
+        env: { HOME: String(dir), NO_COLOR: undefined },
+      },
+    );
+  });
+
   test("evaluates expression and shows result", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("40 + 2\n");
@@ -1205,25 +1378,143 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   });
 
   test("down arrow restores temp line after history", async () => {
-    // Regression: temp_line was leaked/lost when navigating history.
+    using dir = tempDir("repl-history-temp-line", {});
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("partialValue = 777\n");
+        await waitFor("777");
+
+        send("partial");
+        await waitFor("partial");
+        send("\x1b[A");
+        await waitFor("partialValue = 777");
+        send("\x1b[B");
+        await waitFor("partial");
+
+        send("\x03");
+        await waitFor(/\u276f|> /);
+        send("1 + 1\n");
+        await waitFor("2");
+      },
+      { env: { HOME: String(dir) } },
+    );
+  });
+
+  test("Ctrl+Y yanks text deleted by Ctrl+U", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
-      // Establish history
-      send("777 + 1\n");
-      await waitFor("778");
-
-      // Type partial input, go up (to 777+1), then down (back to partial)
-      send("partial");
-      await waitFor("partial");
-      send("\x1b[A"); // Up — shows "777 + 1"
-      await waitFor("777");
-      send("\x1b[B"); // Down — should restore "partial"
-      await waitFor("partial");
-
-      // Cancel and verify REPL still works
-      send("\x03"); // Ctrl+C to clear
+      send("123 + 456");
+      await waitFor("123 + 456");
+      send("\x15");
       await waitFor(/\u276f|> /);
-      send("1 + 1\n");
-      await waitFor("2");
+      send("\x19");
+      await waitFor("123 + 456");
+      send("\n");
+      await waitFor(/\n\s*579\b/);
+    });
+  });
+
+  test("up and down arrows search history by the current prefix", async () => {
+    using dir = tempDir("repl-prefix-history", {
+      ".bun_repl_history": '.js "alpha old"\n.js "beta"\n.js "alpha new"\n',
+    });
+
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send('"alpha');
+        await waitFor('"alpha');
+        send("\x1b[A");
+        await waitFor('"alpha new"');
+        send("\x1b[A");
+        await waitFor('"alpha old"');
+        send("\x1b[B");
+        await waitFor('"alpha new"');
+        send("\x03");
+        await waitFor(/\u276f|> /);
+      },
+      { env: { HOME: String(dir) } },
+    );
+  });
+
+  test("Ctrl+R and Ctrl+S search backward and forward through history", async () => {
+    using dir = tempDir("repl-reverse-history", {
+      ".bun_repl_history": '.js "older needle"\n.js "newer needle"\n',
+    });
+
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("\x12");
+        await waitFor("bck-i-search:");
+        send("needle");
+        await waitFor("newer needle");
+        send("\x12");
+        await waitFor("older needle");
+        send("\x13");
+        await waitFor("newer needle");
+        send("\n");
+        await waitFor(/\u276f|> /);
+      },
+      { env: { HOME: String(dir) } },
+    );
+  });
+
+  test("recalls a persisted multiline entry as one editable command", async () => {
+    using dir = tempDir("repl-multiline-history", {
+      ".bun_repl_history": ".js let persisted = (\n.js| 41\n.js| )\n",
+    });
+
+    await withTerminalRepl(
+      async ({ send, waitFor, allOutput }) => {
+        send("\x1b[A");
+        await waitFor("41");
+        expect(allOutput()).toContain("... 41");
+
+        send("\x1b[A");
+        send("\x1b[3~");
+        send("2");
+        await waitFor("42");
+        send("\n");
+        await waitFor(/\u276f|> /);
+        send("persisted\n");
+        await waitFor(/\n\s*42\b/);
+      },
+      { env: { HOME: String(dir) } },
+    );
+  });
+
+  test("keeps wrapped and exact-width input editable", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("1234567890");
+        await waitFor("1234567890");
+        send("\x7f");
+        const exactWidthEdit = await waitFor("123456789");
+        expect(exactWidthEdit).not.toContain("\x1b[1A");
+        send("0\n");
+        await waitFor(/\n\s*1234567890\b/);
+
+        send("1000000000 + 1");
+        await waitFor("1000000000 + 1");
+        send("\x01");
+        const movedAcrossRows = await waitFor("1000000000 + 1");
+        expect(movedAcrossRows).toContain("\x1b[1A");
+        send("\x1b[3~2\x05\n");
+        await waitFor(/\n\s*2000000001\b/);
+      },
+      { cols: 12 },
+    );
+  });
+
+  test("reflows the current input after a terminal resize", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      send('"123456789012345678901"');
+      await waitFor('"123456789012345678901"');
+
+      terminal.resize(12, 40);
+      send("\x01");
+      const resized = await waitFor(/\x1b\[2A/);
+      expect(resized).toContain("\x1b[2A");
+      send("\x05\n");
+      await waitFor("123456789012345678901");
     });
   });
 
@@ -1235,6 +1526,70 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(".help");
     });
   });
+
+  test("tab completes JavaScript properties and expands their common prefix", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("const completionTarget = { alphaUnique: 1, alphabetSoup: 2 }\n");
+      await waitFor(/\u276f|> /);
+
+      send("completionTarget.alp\t");
+      await waitFor("completionTarget.alpha");
+      send("\t");
+      await waitFor("alphaUnique");
+      expect(allOutput()).toContain("alphabetSoup");
+
+      send("Unique\n");
+      await waitFor(/\n\s*1\b/);
+    });
+  });
+
+  test("shows an inline completion preview and accepts it with Enter", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("const ghostTarget = { previewValue: 42 }; 6000 + 7\n");
+        await waitFor("6007", 3000);
+        await waitFor(/\u276f|> /, 3000);
+
+        send("ghostTarget.previewV");
+        await waitFor("\x1b[2malue\x1b[0m", 3000);
+        send("\n");
+        await waitFor("42", 3000);
+      },
+      { env: { NO_COLOR: undefined } },
+    );
+  }, 15_000);
+
+  test("shows side-effect-free result previews without updating the last result", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("10\n");
+        await waitFor("10", 3000);
+        await waitFor(/\u276f|> /, 3000);
+        send("1 + 1");
+        await waitFor(/\r\n\x1b\[2m2\x1b\[0m/, 3000);
+        send("\x03");
+        await waitFor(/\u276f|> /, 3000);
+        send("_\n");
+        await waitFor("10", 3000);
+      },
+      { env: { NO_COLOR: undefined } },
+    );
+  }, 15_000);
+
+  test("tab completes attributes from the live Python object", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send('import math; print("python-ready")\n');
+        await waitFor("python-ready");
+        await waitFor(">>> ");
+        send("math.sq\t");
+        await waitFor("math.sqrt");
+        send("(81)\n");
+        await waitFor(/\n\s*9(?:\.0)?\b/);
+      },
+      { args: ["python"], startupTimeoutMs: 10_000 },
+    );
+  }, 15_000);
 
   test(".editor mode collects lines until Ctrl+D", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {

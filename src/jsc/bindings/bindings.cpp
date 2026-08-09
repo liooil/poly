@@ -6512,6 +6512,42 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
+extern "C" JSC::EncodedJSValue Bun__REPL__preview(
+    JSC::JSGlobalObject* globalObject,
+    const unsigned char* sourcePtr,
+    size_t sourceLen,
+    JSC::EncodedJSValue* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    *exception = JSC::JSValue::encode(JSC::jsUndefined());
+
+    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    JSC::SourceCode sourceCode = JSC::makeSource(
+        source,
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        "[repl-preview]"_s,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> evalException;
+    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    if (evalException) {
+        *exception = JSC::JSValue::encode(evalException->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (scope.exception()) {
+        *exception = JSC::JSValue::encode(scope.exception()->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
 extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
