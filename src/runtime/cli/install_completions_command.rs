@@ -24,6 +24,9 @@ enum CompletionAction {
 struct CompletionOptions {
     action: CompletionAction,
     shell: Shell,
+    // Only the POSIX install path reads this (the Windows install path
+    // errors out before the `cfg(not(windows))` install body runs).
+    #[allow(dead_code)]
     directory: Option<&'static [u8]>,
 }
 
