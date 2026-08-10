@@ -15,7 +15,7 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  $vsDir = (& $vswhere -prerelease -latest -products "*" -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(
