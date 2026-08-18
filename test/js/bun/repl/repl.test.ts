@@ -225,10 +225,11 @@ describe.concurrent("Bun REPL", () => {
       ".bun_repl_history.c": "sizeof(int)\n",
     });
     const home = String(dir);
+    const homeEnv = { HOME: home, USERPROFILE: home };
 
     const first = await runRepl([".history", ".exit"], {
       args: ["python"],
-      env: { HOME: home },
+      env: homeEnv,
     });
     const output = stripAnsi(first.stdout);
     expect(output).toContain(".js 40 + 2");
@@ -250,7 +251,7 @@ describe.concurrent("Bun REPL", () => {
     ].join("\n");
     expect(await Bun.file(historyPath).text()).toBe(expected);
 
-    const second = await runRepl(".exit\n", { env: { HOME: home } });
+    const second = await runRepl(".exit\n", { env: homeEnv });
     expect(second.stderr).toBe("");
     expect(second.exitCode).toBe(0);
     expect(await Bun.file(historyPath).text()).toBe(expected);
@@ -259,13 +260,14 @@ describe.concurrent("Bun REPL", () => {
   test("persists entries from different modes in one tagged history file", async () => {
     using dir = tempDir("repl-unified-history", {});
     const home = String(dir);
+    const historyPath = path.join(home, ".bun_repl_history");
 
     const result = await runRepl(["40 + 2", ".py", "py_value = 42", "def answer():", "    return 42", "", ".exit"], {
-      env: { HOME: home },
+      env: { HOME: home, USERPROFILE: home, NODE_REPL_HISTORY: historyPath },
     });
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
-    expect(await Bun.file(path.join(home, ".bun_repl_history")).text()).toBe(
+    expect(await Bun.file(historyPath).text()).toBe(
       ".js 40 + 2\n.py py_value = 42\n.py def answer():\n.py|     return 42\n",
     );
   }, 10_000);
@@ -383,6 +385,31 @@ describe.concurrent("Bun REPL", () => {
       expect(output).toContain("Expression assignment to _error now disabled.");
       expect(output).toContain("other");
       expect(output).toContain("mine");
+      expect(exitCode).toBe(0);
+    });
+
+    test("regular expressions containing assignments do not disable special variables", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "1",
+        "/_=/.test('_=') && /_error\\s*=/.test('_error =')",
+        "2",
+        "_",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout);
+
+      expect(output).not.toContain("Expression assignment to _ now disabled.");
+      expect(output).not.toContain("Expression assignment to _error now disabled.");
+      expect(output).toMatch(/> _\r+\n2\n/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("assignments inside template substitutions disable automatic last-result updates", async () => {
+      const { stdout, exitCode } = await runRepl(["`${(_ = 9)}`", "40 + 2", "_", ".exit"]);
+      const output = stripAnsi(stdout);
+
+      expect(output).toContain("Expression assignment to _ now disabled.");
+      expect(output).toMatch(/> _\r+\n9\n/);
       expect(exitCode).toBe(0);
     });
   });
@@ -1543,6 +1570,18 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("tab completion keeps common prefixes on UTF-8 boundaries", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("const unicodeTarget = { 'a\\u00e9': 1, 'a\\u00ea': 2 }\n");
+      await waitFor(/\u276f|> /);
+
+      send("unicodeTarget.a\t");
+      await waitFor("a\u00e9");
+      send("\u00e9\n");
+      await waitFor(/\n\s*1\b/);
+    });
+  });
+
   test("shows an inline completion preview and accepts it with Enter", async () => {
     await withTerminalRepl(
       async ({ send, waitFor }) => {
@@ -1558,6 +1597,28 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       { env: { NO_COLOR: undefined } },
     );
   }, 15_000);
+
+  test("inline completion does not invoke getters or Proxy traps", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(
+        "let getterReads = 0, proxyReads = 0; const holder = {}; " +
+          "Object.defineProperty(holder, 'target', { get() { getterReads++; return { previewValue: 1 } } }); " +
+          "const proxyTarget = new Proxy({ previewValue: 1 }, { get(target, key, receiver) { proxyReads++; return Reflect.get(target, key, receiver) } });\n",
+      );
+      await waitFor(/\u276f|> /);
+
+      send("holder.target.previewV");
+      await waitFor("holder.target.previewV");
+      send("\x03");
+      await waitFor(/\u276f|> /);
+      send("proxyTarget.previewV");
+      await waitFor("proxyTarget.previewV");
+      send("\x03");
+      await waitFor(/\u276f|> /);
+      send("getterReads + proxyReads\n");
+      await waitFor(/\n\s*0\b/);
+    });
+  });
 
   test("shows side-effect-free result previews without updating the last result", async () => {
     await withTerminalRepl(

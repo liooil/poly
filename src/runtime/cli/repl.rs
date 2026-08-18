@@ -56,6 +56,14 @@ unsafe extern "C" {
         targetValue: JSValue,
         prefixPtr: *const u8,
         prefixLen: usize,
+        allowSideEffects: bool,
+    ) -> JSValue;
+
+    fn Bun__REPL__getPropertyVMInquiry(
+        globalObject: *const JSGlobalObject,
+        targetValue: JSValue,
+        propertyPtr: *const u8,
+        propertyLen: usize,
     ) -> JSValue;
 
     fn Bun__REPL__preview(
@@ -1230,6 +1238,29 @@ pub(super) enum ReplMode {
     C,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompletionLookup {
+    Explicit,
+    Preview,
+}
+
+impl CompletionLookup {
+    fn allow_side_effects(self) -> bool {
+        self == Self::Explicit
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct SpecialVariableAssignments {
+    underscore: bool,
+    underscore_error: bool,
+}
+
+struct TransformedReplCode {
+    code: Box<[u8]>,
+    assignments: SpecialVariableAssignments,
+}
+
 impl ReplMode {
     const ALL: [Self; 5] = [
         ReplMode::Js,
@@ -1397,12 +1428,16 @@ impl<'a> Repl<'a> {
         global.to_js_value().put(global, b"_error", stored);
     }
 
-    fn update_special_variables(&mut self, code: &[u8], result: JSValue) {
+    fn update_special_variables(
+        &mut self,
+        assignments: SpecialVariableAssignments,
+        result: JSValue,
+    ) {
         let Some(global) = self.global else {
             return;
         };
-        let assigned_underscore = code_assigns_identifier(code, b"_");
-        let assigned_error = code_assigns_identifier(code, b"_error");
+        let assigned_underscore = assignments.underscore;
+        let assigned_error = assignments.underscore_error;
         let underscore_value = assigned_underscore
             .then(|| global.to_js_value().get(global, b"_"))
             .and_then(Result::ok)
@@ -1915,14 +1950,17 @@ impl<'a> Repl<'a> {
             return Vec::new();
         }
         let target = if let Some((_, expression)) = completion_receiver(line, word_start) {
-            let Some(target) = resolve_js_completion_target(global, expression) else {
+            let Some(target) =
+                resolve_js_completion_target(global, expression, CompletionLookup::Preview)
+            else {
                 return Vec::new();
             };
             target
         } else {
             JSValue::UNDEFINED
         };
-        let candidates = js_completion_candidates(global, target, prefix);
+        let candidates =
+            js_completion_candidates(global, target, prefix, CompletionLookup::Preview);
         common_completion_suffix(&candidates, prefix.len())
     }
 
@@ -2340,7 +2378,7 @@ impl<'a> Repl<'a> {
         };
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
-        let Some(transformed_code) = self.transform_for_repl(code) else {
+        let Some(transformed) = self.transform_for_repl(code) else {
             // Transform failed, try evaluating raw code (for syntax errors, etc.)
             self.evaluate_raw(code);
             return;
@@ -2353,8 +2391,8 @@ impl<'a> Repl<'a> {
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                transformed.code.as_ptr(),
+                transformed.code.len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
                 &raw mut exception,
@@ -2438,7 +2476,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        self.update_special_variables(code, actual_result);
+        self.update_special_variables(transformed.assignments, actual_result);
 
         if actual_result.is_undefined() {
             if self.use_colors {
@@ -2484,7 +2522,7 @@ impl<'a> Repl<'a> {
             return false;
         }
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
+        let Some(transformed) = self.transform_for_repl(code) else {
             // Transform failed — fall back to raw evaluation for the error message
             let mut exception: JSValue = JSValue::UNDEFINED;
             // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
@@ -2511,8 +2549,8 @@ impl<'a> Repl<'a> {
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                transformed.code.as_ptr(),
+                transformed.code.len(),
                 b"[eval]".as_ptr(),
                 b"[eval]".len(),
                 &raw mut exception,
@@ -2613,7 +2651,7 @@ impl<'a> Repl<'a> {
             return;
         }
 
-        self.update_special_variables(code, result);
+        self.update_special_variables(SpecialVariableAssignments::default(), result);
 
         if !result.is_undefined() {
             self.print_formatted_value(result);
@@ -2823,7 +2861,7 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
+        let Some(transformed) = self.transform_for_repl(code) else {
             self.evaluate_raw(code);
             return;
         };
@@ -2834,8 +2872,8 @@ impl<'a> Repl<'a> {
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                transformed.code.as_ptr(),
+                transformed.code.len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
                 &raw mut exception,
@@ -2902,7 +2940,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        self.update_special_variables(code, actual_result);
+        self.update_special_variables(transformed.assignments, actual_result);
 
         if let Err(err) = self.copy_value_to_clipboard(actual_result) {
             let exc = global.take_exception(err);
@@ -3009,7 +3047,7 @@ impl<'a> Repl<'a> {
     }
 
     /// Transform code using the REPL parser (hoists declarations, wraps expressions)
-    fn transform_for_repl(&self, code: &[u8]) -> Option<Box<[u8]>> {
+    fn transform_for_repl(&self, code: &[u8]) -> Option<TransformedReplCode> {
         let vm = self.vm?;
 
         // Skip empty code
@@ -3095,6 +3133,19 @@ impl<'a> Repl<'a> {
         if log.errors > 0 {
             return None;
         }
+
+        let mut assignments = SpecialVariableAssignments::default();
+        for symbol in ast.symbols.iter() {
+            if symbol.kind != bun_ast::symbol::Kind::Unbound || !symbol.has_been_assigned_to() {
+                continue;
+            }
+            match symbol.original_name.slice() {
+                b"_" => assignments.underscore = true,
+                b"_error" => assignments.underscore_error = true,
+                _ => {}
+            }
+        }
+
         // Print the transformed AST back to JavaScript
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
@@ -3131,14 +3182,20 @@ impl<'a> Repl<'a> {
 
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
-        if self.strict_mode {
+        Some(if self.strict_mode {
             let mut strict = Vec::with_capacity(written.len() + 14);
             strict.extend_from_slice(b"\"use strict\";\n");
             strict.extend_from_slice(written);
-            Some(strict.into_boxed_slice())
+            TransformedReplCode {
+                code: strict.into_boxed_slice(),
+                assignments,
+            }
         } else {
-            Some(Box::<[u8]>::from(written))
-        }
+            TransformedReplCode {
+                code: Box::<[u8]>::from(written),
+                assignments,
+            }
+        })
     }
 
     fn print_js_error(&self, error_value: JSValue) {
@@ -3896,16 +3953,7 @@ impl<'a> Repl<'a> {
                 self.refresh_line();
             }
             _ => {
-                let prefix_len = completions.iter().skip(1).fold(
-                    completions[0].len(),
-                    |prefix_len, completion| {
-                        completions[0][..prefix_len]
-                            .iter()
-                            .zip(completion)
-                            .take_while(|(left, right)| left == right)
-                            .count()
-                    },
-                );
+                let prefix_len = common_completion_prefix_len(&completions);
                 let typed_len = self.line_editor.cursor.saturating_sub(word_start);
                 if prefix_len > typed_len {
                     let _ = self
@@ -4026,7 +4074,7 @@ impl<'a> Repl<'a> {
         }
 
         let target = if let Some((_, expression)) = receiver {
-            match resolve_js_completion_target(global, expression) {
+            match resolve_js_completion_target(global, expression, CompletionLookup::Explicit) {
                 Some(target) => target,
                 None => {
                     self.render_completions(&[], word_start);
@@ -4037,7 +4085,8 @@ impl<'a> Repl<'a> {
             JSValue::UNDEFINED
         };
 
-        let candidates = js_completion_candidates(global, target, prefix);
+        let candidates =
+            js_completion_candidates(global, target, prefix, CompletionLookup::Explicit);
         self.render_completions(&candidates, word_start);
     }
 }
@@ -4265,15 +4314,30 @@ fn completion_receiver(line: &[u8], word_start: usize) -> Option<(usize, &[u8])>
     Some((receiver_start, expression))
 }
 
-fn resolve_js_completion_target(global: &JSGlobalObject, expression: &[u8]) -> Option<JSValue> {
+fn resolve_js_completion_target(
+    global: &JSGlobalObject,
+    expression: &[u8],
+    lookup: CompletionLookup,
+) -> Option<JSValue> {
     let mut target = global.to_js_value();
     for property in expression.split(|ch| *ch == b'.') {
-        target = match target.get(global, property) {
-            Ok(Some(value)) => value,
-            Ok(None) => return None,
-            Err(_) => {
-                global.clear_exception();
+        target = if lookup == CompletionLookup::Preview {
+            // SAFETY: `global` is live and `property` remains valid for the call.
+            let value = unsafe {
+                Bun__REPL__getPropertyVMInquiry(global, target, property.as_ptr(), property.len())
+            };
+            if value.is_empty() {
                 return None;
+            }
+            value
+        } else {
+            match target.get(global, property) {
+                Ok(Some(value)) => value,
+                Ok(None) => return None,
+                Err(_) => {
+                    global.clear_exception();
+                    return None;
+                }
             }
         };
     }
@@ -4284,10 +4348,18 @@ fn js_completion_candidates(
     global: &JSGlobalObject,
     target: JSValue,
     prefix: &[u8],
+    lookup: CompletionLookup,
 ) -> Vec<Vec<u8>> {
     // SAFETY: `global` is live and `prefix` remains valid for the duration of the call.
-    let completions =
-        unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
+    let completions = unsafe {
+        Bun__REPL__getCompletions(
+            global,
+            target,
+            prefix.as_ptr(),
+            prefix.len(),
+            lookup.allow_side_effects(),
+        )
+    };
     if completions.is_undefined() || !completions.is_array() {
         return Vec::new();
     }
@@ -4321,11 +4393,11 @@ fn js_completion_candidates(
     candidates
 }
 
-fn common_completion_suffix(candidates: &[Vec<u8>], typed_len: usize) -> Vec<u8> {
+fn common_completion_prefix_len(candidates: &[Vec<u8>]) -> usize {
     let Some(first) = candidates.first() else {
-        return Vec::new();
+        return 0;
     };
-    let prefix_len = candidates
+    let mut prefix_len = candidates
         .iter()
         .skip(1)
         .fold(first.len(), |len, candidate| {
@@ -4335,6 +4407,21 @@ fn common_completion_suffix(candidates: &[Vec<u8>], typed_len: usize) -> Vec<u8>
                 .take_while(|(left, right)| left == right)
                 .count()
         });
+
+    while prefix_len > 0
+        && prefix_len < first.len()
+        && !strings::is_utf8_char_boundary(first[prefix_len])
+    {
+        prefix_len -= 1;
+    }
+    prefix_len
+}
+
+fn common_completion_suffix(candidates: &[Vec<u8>], typed_len: usize) -> Vec<u8> {
+    let Some(first) = candidates.first() else {
+        return Vec::new();
+    };
+    let prefix_len = common_completion_prefix_len(candidates);
     if prefix_len <= typed_len {
         return Vec::new();
     }
@@ -4446,103 +4533,6 @@ fn is_safe_js_preview_expression(code: &[u8]) -> bool {
         }
     }
     true
-}
-
-fn code_assigns_identifier(code: &[u8], identifier: &[u8]) -> bool {
-    let mut index = 0usize;
-    let mut quote = 0u8;
-    let mut escaped = false;
-    let mut line_comment = false;
-    let mut block_comment = false;
-
-    while index < code.len() {
-        let ch = code[index];
-        if line_comment {
-            if ch == b'\n' {
-                line_comment = false;
-            }
-            index += 1;
-            continue;
-        }
-        if block_comment {
-            if ch == b'*' && code.get(index + 1) == Some(&b'/') {
-                block_comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if quote != 0 {
-            if escaped {
-                escaped = false;
-            } else if ch == b'\\' {
-                escaped = true;
-            } else if ch == quote {
-                quote = 0;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(ch, b'\'' | b'"' | b'`') {
-            quote = ch;
-            index += 1;
-            continue;
-        }
-        if ch == b'/' && code.get(index + 1) == Some(&b'/') {
-            line_comment = true;
-            index += 2;
-            continue;
-        }
-        if ch == b'/' && code.get(index + 1) == Some(&b'*') {
-            block_comment = true;
-            index += 2;
-            continue;
-        }
-        if ch.is_ascii_alphabetic() || matches!(ch, b'_' | b'$') {
-            let start = index;
-            index += 1;
-            while index < code.len()
-                && (code[index].is_ascii_alphanumeric() || matches!(code[index], b'_' | b'$'))
-            {
-                index += 1;
-            }
-            if &code[start..index] != identifier {
-                continue;
-            }
-
-            let mut next = index;
-            while code.get(next).is_some_and(u8::is_ascii_whitespace) {
-                next += 1;
-            }
-            if code.get(next) == Some(&b'=') && !matches!(code.get(next + 1), Some(b'=' | b'>')) {
-                return true;
-            }
-            if matches!(code.get(next), Some(b'+' | b'-'))
-                && (code.get(next + 1) == Some(&b'=') || code.get(next + 1) == code.get(next))
-            {
-                return true;
-            }
-            if matches!(
-                code.get(next),
-                Some(b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'?')
-            ) && (code.get(next + 1) == Some(&b'=') || code.get(next + 2) == Some(&b'='))
-            {
-                return true;
-            }
-
-            let mut previous = start;
-            while previous > 0 && code[previous - 1].is_ascii_whitespace() {
-                previous -= 1;
-            }
-            if previous >= 2 && matches!(&code[previous - 2..previous], b"++" | b"--") {
-                return true;
-            }
-            continue;
-        }
-        index += 1;
-    }
-    false
 }
 
 /// Python: names in the persistent REPL scope (via the embedded RustPython

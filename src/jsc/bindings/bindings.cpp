@@ -6548,13 +6548,48 @@ extern "C" JSC::EncodedJSValue Bun__REPL__preview(
     return JSC::JSValue::encode(result);
 }
 
+extern "C" JSC::EncodedJSValue Bun__REPL__getPropertyVMInquiry(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue targetValue,
+    const unsigned char* propertyPtr,
+    size_t propertyLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue target = JSC::JSValue::decode(targetValue);
+    if (!target.isObject()) {
+        return {};
+    }
+
+    WTF::String property = WTF::String::fromUTF8(std::span { propertyPtr, propertyLen });
+    if (property.isNull()) {
+        return {};
+    }
+
+    JSC::Identifier identifier = JSC::Identifier::fromString(vm, property);
+    JSC::JSObject* object = target.getObject();
+    if (object->type() == JSC::ProxyObjectType) {
+        return {};
+    }
+    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+    scope.assertNoExceptionExceptTermination();
+    bool hasProperty = object->getPropertySlot(globalObject, identifier, slot);
+    scope.assertNoExceptionExceptTermination();
+    if (!hasProperty || slot.isAccessor() || slot.isCustom() || slot.isTaintedByOpaqueObject()) {
+        return {};
+    }
+
+    return JSC::JSValue::encode(slot.getPureResult());
+}
+
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
 extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue targetValue,
     const unsigned char* prefixPtr,
-    size_t prefixLen)
+    size_t prefixLen,
+    bool allowSideEffects)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6575,6 +6610,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         : WTF::String();
 
     JSC::JSObject* object = target.getObject();
+    if (!allowSideEffects && object->type() == JSC::ProxyObjectType) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
@@ -6592,11 +6630,16 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     }
 
     // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+    JSC::JSValue proto = allowSideEffects ? object->getPrototype(globalObject) : object->getPrototypeDirect();
+    if (allowSideEffects) {
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+    }
 
     while (proto && proto.isObject()) {
         JSC::JSObject* protoObj = proto.getObject();
+        if (!allowSideEffects && protoObj->type() == JSC::ProxyObjectType) {
+            break;
+        }
         JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
         protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
@@ -6609,8 +6652,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
             }
         }
 
-        proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+        proto = allowSideEffects ? protoObj->getPrototype(globalObject) : protoObj->getPrototypeDirect();
+        if (allowSideEffects) {
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+        }
     }
 
     return JSC::JSValue::encode(completions);
