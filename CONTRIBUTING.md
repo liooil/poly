@@ -35,7 +35,7 @@ $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config 
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang llvm lld cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -94,17 +94,17 @@ Our build scripts will automatically detect and use `ccache` if available. You c
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun follows the current stable LLVM toolchain provided by your package source. The build only discovers the unversioned tools (`clang`, `clang++`, `ld.lld`, and the other `llvm-*` commands); it does not maintain fallbacks for older versioned release lines. In most cases, install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@21
+$ brew install llvm
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- all
 ```
 
 ```bash#Arch
@@ -116,17 +116,18 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang21 lld21 llvm21
+$ sudo zypper install clang lld llvm
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of the above solutions apply, install the [latest stable LLVM release](https://github.com/llvm/llvm-project/releases/latest) manually.
 
-Make sure Clang/LLVM 21 is in your path:
+Make sure the unversioned Clang command resolves to that toolchain:
 
 ```bash
-$ which clang-21
+$ command -v clang
+$ clang --version
 ```
 
 If not, run this to manually add it:
@@ -135,13 +136,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+# use path+="$(brew --prefix llvm)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm)/bin:$PATH"
 ```
 
-```bash#Arch
-# use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm21/bin"
+```bash#Ubuntu/Debian (apt.llvm.org)
+$ LLVM_BIN="$(ls -d /usr/lib/llvm-*/bin | sort -V | tail -n 1)"
+$ export PATH="$LLVM_BIN:$PATH"
 ```
 
 {% /codetabs %}
@@ -318,7 +319,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-21"
+  "/usr/bin/clang++"
 
 is not able to compile a simple test program.
 ```

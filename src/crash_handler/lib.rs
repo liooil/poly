@@ -3217,11 +3217,7 @@ mod draft {
             let programs: &[&bun_core::ZStr] = if cfg!(windows) {
                 &[bun_core::zstr!("pdb-addr2line")]
             } else {
-                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
-                &[
-                    bun_core::zstr!("llvm-symbolizer"),
-                    bun_core::zstr!("llvm-symbolizer-21"),
-                ]
+                &[bun_core::zstr!("llvm-symbolizer")]
             };
             for &program in programs {
                 // Only stop once a symbolizer actually ran and exited 0. Any failure

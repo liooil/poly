@@ -32,10 +32,10 @@ const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
  * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
  * stripped bun):
  *
- *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 21 prints
- *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
- *     default instead of the 18 MB JSC needs. Tracked in workarounds.ts
- *     ("darwin-cross-stack-size").
+ *   - ld64.lld releases before LLVM 23 parse `-stack_size` but don't
+ *     implement it (they print "not yet implemented"), so LC_MAIN.stacksize
+ *     stays 0 → the 8 MB default instead of the 18 MB JSC needs. Tracked in
+ *     workarounds.ts ("darwin-cross-stack-size").
  *   - arm64 only: the ad-hoc signature the linker emits has no entitlements,
  *     and any header edit (the stack-size patch) invalidates it anyway —
  *     arm64 macOS refuses to exec a binary with a stale CodeDirectory. The

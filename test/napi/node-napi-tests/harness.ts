@@ -3,7 +3,7 @@ import { existsSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { bunExe, bunEnv, isCI, isMusl } from "../../harness";
+import { bunExe, bunEnv, isCI } from "../../harness";
 
 // Tests that intentionally abort and should not generate core dumps when they abort
 // due to a Node-API error
@@ -12,7 +12,7 @@ const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
 // Must match the npm_config_target passed to node-gyp below (without the leading "v").
 const NODE_HEADERS_VERSION = "26.3.0";
 
-const linuxClang = !isMusl ? "/usr/lib/llvm-21/bin/clang" : "/usr/lib/llvm21/bin/clang";
+const linuxClang = "clang";
 
 interface GypTarget {
   target_name: string;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 42
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1173,12 +1173,13 @@ is_ci_build_host() {
 	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
 }
 
-llvm_version_exact() {
-	print "21.1.8"
-}
-
 llvm_version() {
-	print "$(llvm_version_exact)" | cut -d. -f1
+	llvm_clang_path="$(require clang)"
+	llvm_detected_major="$("$llvm_clang_path" --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+	if [ -z "$llvm_detected_major" ]; then
+		error "Could not determine the LLVM major version from $llvm_clang_path --version."
+	fi
+	print "$llvm_detected_major"
 }
 
 install_llvm() {
@@ -1194,24 +1195,30 @@ install_llvm() {
 
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-
-		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools"
+		execute_sudo "$bash" "$llvm_script" all
+		llvm_major="$(sed -n 's/^CURRENT_LLVM_STABLE=//p' "$llvm_script" | head -n 1)"
+		case "$llvm_major" in
+		"" | *[!0-9]*) error "Could not determine apt.llvm.org's current stable LLVM release." ;;
+		esac
 		# Put the full LLVM bin dir on PATH so unversioned llvm-objcopy,
 		# llvm-strip, llvm-ar etc. resolve (debian only symlinks a subset).
-		append_to_path "/usr/lib/llvm-$(llvm_version)/bin"
+		append_to_path "/usr/lib/llvm-$llvm_major/bin"
 		;;
 	brew)
-		install_packages "llvm@$(llvm_version)"
+		install_packages llvm
+		brew_bin="$(require brew)"
+		append_to_path "$("$brew_bin" --prefix llvm)/bin"
 		;;
 	apk)
 		install_packages \
-			"llvm$(llvm_version)" \
-			"clang$(llvm_version)" \
+			llvm \
+			clang \
 			"scudo-malloc" \
-			"lld$(llvm_version)" \
-			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+			lld \
+			llvm-dev # Ensures llvm-symbolizer is installed
+		;;
+	dnf | yum)
+		install_packages llvm clang lld
 		;;
 	esac
 }
@@ -1265,13 +1272,11 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="21"
-
-	append_to_profile "export CC=clang-${llvm_v}"
-	append_to_profile "export CXX=clang++-${llvm_v}"
-	append_to_profile "export AR=llvm-ar-${llvm_v}"
-	append_to_profile "export RANLIB=llvm-ranlib-${llvm_v}"
-	append_to_profile "export LD=lld-${llvm_v}"
+	append_to_profile "export CC=clang"
+	append_to_profile "export CXX=clang++"
+	append_to_profile "export AR=llvm-ar"
+	append_to_profile "export RANLIB=llvm-ranlib"
+	append_to_profile "export LD=ld.lld"
 	append_to_profile "export LD_LIBRARY_PATH=/usr/lib/gcc/${arch_path}/${gcc_version}:/usr/lib/${arch_path}"
 	append_to_profile "export LIBRARY_PATH=/usr/lib/gcc/${arch_path}/${gcc_version}:/usr/lib/${arch_path}"
 	append_to_profile "export CPLUS_INCLUDE_PATH=/usr/include/c++/${gcc_version}:/usr/include/${arch_path}/c++/${gcc_version}"
@@ -1286,17 +1291,17 @@ install_gcc() {
 	append_file "$ld_conf_path" "/usr/lib/$arch_path"
 	execute_sudo ldconfig
 
-	execute_sudo ln -sf $(which clang-$llvm_v) /usr/bin/clang
-	execute_sudo ln -sf $(which clang++-$llvm_v) /usr/bin/clang++
-	execute_sudo ln -sf $(which lld-$llvm_v) /usr/bin/lld
-	execute_sudo ln -sf $(which lldb-$llvm_v) /usr/bin/lldb
-	execute_sudo ln -sf $(which clangd-$llvm_v) /usr/bin/clangd
-	execute_sudo ln -sf $(which llvm-ar-$llvm_v) /usr/bin/llvm-ar
-	execute_sudo ln -sf $(which ld.lld-$llvm_v) /usr/bin/ld
-	execute_sudo ln -sf $(which clang) /usr/bin/cc
-	execute_sudo ln -sf $(which clang++) /usr/bin/c++
+	execute_sudo ln -sf "$(which clang)" /usr/bin/clang
+	execute_sudo ln -sf "$(which clang++)" /usr/bin/clang++
+	execute_sudo ln -sf "$(which lld)" /usr/bin/lld
+	execute_sudo ln -sf "$(which lldb)" /usr/bin/lldb
+	execute_sudo ln -sf "$(which clangd)" /usr/bin/clangd
+	execute_sudo ln -sf "$(which llvm-ar)" /usr/bin/llvm-ar
+	execute_sudo ln -sf "$(which ld.lld)" /usr/bin/ld
+	execute_sudo ln -sf "$(which clang)" /usr/bin/cc
+	execute_sudo ln -sf "$(which clang++)" /usr/bin/c++
 	# Make sure llvm-symbolizer is available for ASAN
-	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
+	execute_sudo ln -sf "$(which llvm-symbolizer)" /usr/bin/llvm-symbolizer
 }
 
 install_ccache() {
@@ -1393,7 +1398,7 @@ install_android_ndk() {
 	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
 	# with no -L fallback, so the file must exist there for any android link.
 	# Done here (as root) so the build user doesn't need write access to /usr.
-	clang="$(which clang-$(llvm_version) || which clang)"
+	clang="$(which clang)"
 	if [ -x "$clang" ]; then
 		res_dir="$("$clang" -print-resource-dir)"
 		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"

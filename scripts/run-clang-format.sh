@@ -11,14 +11,11 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Default to format mode (modify files)
 MODE="${1:-format}"
 
-# Use LLVM_VERSION_MAJOR from environment or default to 19
-LLVM_VERSION="${LLVM_VERSION_MAJOR:-21}"
-
-# Ensure we have the specific clang-format version
-CLANG_FORMAT="clang-format-${LLVM_VERSION}"
+# Use the current clang-format selected by the environment.
+CLANG_FORMAT="${CLANG_FORMAT:-clang-format}"
 if ! command -v "$CLANG_FORMAT" &> /dev/null; then
     echo "Error: $CLANG_FORMAT not found" >&2
-    echo "Please install clang-format version $LLVM_VERSION" >&2
+    echo "Please install the current clang-format package" >&2
     exit 1
 fi
 

@@ -15,11 +15,10 @@ $scoopShims = Join-Path $scoopRoot "shims"
 $env:Path = "$scoopShims;$env:Path"
 Add-Content -LiteralPath $env:GITHUB_PATH -Value $scoopShims
 
-# Bun's Windows guide pins LLVM exactly. Install it separately because Scoop's
-# LLVM manifest and the other tool manifests should not share one transaction.
-scoop install llvm@21.1.8
+# Install Scoop's current LLVM separately from the other tool manifests.
+scoop install llvm
 if ($LASTEXITCODE -ne 0) {
-    throw "Could not install LLVM 21.1.8."
+    throw "Could not install LLVM."
 }
 $llvmBin = Join-Path $scoopRoot "apps\llvm\current\bin"
 $env:Path = "$llvmBin;$env:Path"
@@ -50,12 +49,7 @@ foreach ($command in $requiredCommands) {
     }
 }
 
-$clangVersion = (& clang-cl --version | Select-Object -First 1)
-if ($clangVersion -notmatch "21\.1\.8") {
-    throw "Expected clang-cl 21.1.8, found: $clangVersion"
-}
-
-Write-Host $clangVersion
+Write-Host (& clang-cl --version | Select-Object -First 1)
 Write-Host (& nasm -v)
 Write-Host (& go version)
 Write-Host (& ruby --version)

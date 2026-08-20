@@ -76,9 +76,8 @@ export const workarounds: Workaround[] = [
       // Fix merged to LLVM main. Backport to release/22.x is
       // https://github.com/llvm/llvm-project/pull/188913 — lower this
       // threshold to the exact 22.1.x once it lands. Apple clang is
-      // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
-      // always LLVM clang's version here.
+      // already excluded by resolveLlvmToolchain, so cfg.clangVersion is
+      // always upstream LLVM clang's version here.
       const FIXED_IN_LLVM = "22.1.4";
       return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
     },
@@ -164,11 +163,11 @@ export const workarounds: Workaround[] = [
       "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
     applies: cfg => cfg.darwin && cfg.crossTarget !== undefined,
     expectedToBeFixed: cfg => {
-      // Not implemented as of LLVM 21 (lld/MachO/Driver.cpp keeps
-      // OPT_stack_size in the "unimplemented, warn and ignore" list).
-      // Re-test when the toolchain moves to LLVM 23: link a darwin cross
-      // build and check whether `ld64.lld ... -stack_size 0x1200000` still
-      // prints "is not yet implemented". If it does, bump this threshold.
+      // LLVM releases before 23 keep OPT_stack_size in lld/MachO/Driver.cpp's
+      // "unimplemented, warn and ignore" list. When the predicate trips, link
+      // a darwin cross build and check whether `ld64.lld ... -stack_size
+      // 0x1200000` still prints "is not yet implemented". If it does, bump
+      // this threshold.
       // (A configure-time probe that spawned ld64.lld was tried first and
       // reverted: the rust/cpp split steps configure on machines whose
       // ld64.lld doesn't behave like the link machine's, and a probe that

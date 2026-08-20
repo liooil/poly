@@ -18,7 +18,7 @@ import { BuildError } from "./error.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Parse a version like "21.1.8" out of arbitrary text (tool --version output).
+ * Parse an X.Y.Z version out of arbitrary text (tool --version output).
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
@@ -150,11 +150,10 @@ function isExecutable(p: string): boolean {
 }
 
 /**
- * Get the version of a tool. Returns the parsed X.Y.Z, or a diagnostic
- * string describing why parsing failed (starts with a digit → version,
- * otherwise → failure reason for the rejection log).
+ * Get the version of a tool. Returns the parsed X.Y.Z with the raw output,
+ * or a diagnostic describing why parsing failed.
  */
-function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
+function getToolVersion(exe: string, versionArg: string): { version: string; output: string } | { reason: string } {
   // stdio ignore on stdin: on Windows CI the parent's stdin can be a
   // handle that blocks the child's CRT init. --version never reads stdin.
   // 30s timeout: cold start of a large binary (clang is 100+ MB) through
@@ -168,15 +167,16 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
     return { reason: `spawn failed: ${result.error.message}` };
   }
   // Some tools print their version to stderr instead of stdout. Check both.
-  const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
-  if (version !== undefined) return { version };
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  const version = parseVersion(output);
+  if (version !== undefined) return { version, output };
   // Parse failed — include what we saw (truncated) so the error is
   // actionable instead of just "could not parse".
-  const output = ((result.stdout ?? "") + (result.stderr ?? "")).trim().slice(0, 200);
+  const diagnostic = output.slice(0, 200);
   if (result.status !== 0) {
-    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+    return { reason: `exited ${result.status}: ${diagnostic || "(no output)"}` };
   }
-  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+  return { reason: `no X.Y.Z in output: ${diagnostic || "(empty)"}` };
 }
 
 /**
@@ -261,15 +261,6 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
- */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
-const LLVM_MINOR = "1";
-const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
-
-/**
  * Known LLVM install locations per platform. Call ONCE from
  * resolveLlvmToolchain — it contains a spawn on macOS (brew --prefix as
  * fallback) which takes ~100ms, so calling it per-tool would dominate
@@ -294,7 +285,6 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
         brewPrefix = defaultPrefix;
       }
     }
-    paths.push(`${brewPrefix}/opt/llvm@${LLVM_MAJOR}/bin`);
     paths.push(`${brewPrefix}/opt/llvm/bin`);
   }
 
@@ -305,54 +295,29 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 
   if (os === "linux" || os === "darwin") {
     paths.push("/usr/lib/llvm/bin");
-    // Debian/Ubuntu-style suffixed paths
-    paths.push(`/usr/lib/llvm-${LLVM_MAJOR}.${LLVM_MINOR}.0/bin`);
-    paths.push(`/usr/lib/llvm-${LLVM_MAJOR}.${LLVM_MINOR}/bin`);
-    paths.push(`/usr/lib/llvm-${LLVM_MAJOR}/bin`);
-    paths.push(`/usr/lib/llvm${LLVM_MAJOR}/bin`);
   }
 
   return paths;
 }
 
-/**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
- * Unix distros often only ship these suffixed versions.
- */
-function llvmNameVariants(name: string): string[] {
-  return [
-    name,
-    `${name}-${LLVM_MAJOR}.${LLVM_MINOR}.0`,
-    `${name}-${LLVM_MAJOR}.${LLVM_MINOR}`,
-    `${name}-${LLVM_MAJOR}`,
-  ];
-}
-
 function llvmInstallHint(os: OS): string {
-  if (os === "darwin") return `Install with: brew install llvm@${LLVM_MAJOR}`;
-  if (os === "linux")
-    return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR}  (or equivalent for your distro)`;
-  if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases`;
+  if (os === "darwin") return "Install with: brew install llvm";
+  if (os === "linux") return "Install the current clang and lld packages for your distro";
+  if (os === "windows") return "Install the latest LLVM release from https://github.com/llvm/llvm-project/releases";
   return "";
 }
 
 /**
- * Find an LLVM tool with version checking. `paths` computed once by the
- * caller (contains a slow brew spawn on macOS).
+ * Find the unversioned LLVM tool selected by the system. `paths` is computed
+ * once by the caller because it can contain a slow brew spawn on macOS.
  */
-function findLlvmTool(
-  baseName: string,
-  paths: string[],
-  os: OS,
-  opts: { checkVersion: boolean; required: boolean },
-): FoundTool | undefined {
+function findLlvmTool(baseName: string, paths: string[], os: OS, opts: { required: boolean }): FoundTool | undefined {
   const spec: ToolSpec = {
-    names: llvmNameVariants(baseName),
+    names: [baseName],
     paths,
     required: opts.required,
     hint: llvmInstallHint(os),
   };
-  if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
   return findTool(spec);
 }
 
@@ -414,18 +379,25 @@ export function resolveLlvmToolchain(
   // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
   const msvcTarget = targetOs === "windows";
 
-  // clang — version-checked. clang++ is the same binary (hardlink or
-  // symlink) from the same install; a second version-check spawn would
-  // just return the same answer. We still locate it separately so the
-  // "not found" error names the right tool.
+  // clang++ is normally a hardlink or symlink from the same install. Locate it
+  // separately so a missing executable still names the right tool.
   const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
-    checkVersion: true,
     required: true,
   });
   const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
-    checkVersion: false,
     required: true,
   })?.path;
+
+  if (ccResult === undefined) {
+    throw new BuildError("unreachable: required compiler undefined");
+  }
+  const ccVersion = getToolVersion(ccResult.path, "--version");
+  if ("reason" in ccVersion) {
+    throw new BuildError(`Could not determine the LLVM version for ${ccResult.path}`, { hint: ccVersion.reason });
+  }
+  if (/\bApple clang version\b/.test(ccVersion.output)) {
+    throw new BuildError(`Apple Clang is not supported at ${ccResult.path}`, { hint: llvmInstallHint(os) });
+  }
 
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
   // darwin cross-compiles, which rebuild the include search path explicitly
@@ -454,15 +426,14 @@ export function resolveLlvmToolchain(
   let hostCc: string | undefined;
   let hostCxx: string | undefined;
   if (msvcTarget && os !== "windows") {
-    hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
-    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
+    hostCc = findLlvmTool("clang", paths, os, { required: true })?.path;
+    hostCxx = findLlvmTool("clang++", paths, os, { required: true })?.path;
   }
 
   // ar: llvm-ar (or llvm-lib for windows targets)
   // No version check — ar doesn't always print a parseable version,
   // and any ar from the same LLVM install is fine.
   const ar = findLlvmTool(msvcTarget ? "llvm-lib" : "llvm-ar", paths, os, {
-    checkVersion: false,
     required: true,
   })?.path;
 
@@ -472,7 +443,6 @@ export function resolveLlvmToolchain(
   let ranlib: string | undefined;
   if (os !== "windows") {
     ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
       required: true,
     })?.path;
   }
@@ -481,9 +451,9 @@ export function resolveLlvmToolchain(
   // On Darwin clang drives the system linker directly.
   let ld: string;
   if (msvcTarget) {
-    ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
+    ld = findLlvmTool("lld-link", paths, os, { required: true })?.path ?? "";
   } else if (os === "linux") {
-    ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
+    ld = findLlvmTool("ld.lld", paths, os, { required: true })?.path ?? "";
   } else {
     ld = ""; // darwin: unused
   }
@@ -494,7 +464,7 @@ export function resolveLlvmToolchain(
   // the same LLVM install as ld.lld, and the lookup is a handful of stats.
   let ld64Lld: string | undefined;
   if (os !== "darwin" && os !== "windows") {
-    ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
+    ld64Lld = findLlvmTool("ld64.lld", paths, os, { required: false })?.path;
   }
 
   // strip: GNU strip on Linux (more features), llvm-strip elsewhere.
@@ -504,9 +474,9 @@ export function resolveLlvmToolchain(
   let llvmStrip: string | undefined;
   if (os === "linux") {
     strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
-    llvmStrip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: false })?.path;
+    llvmStrip = findLlvmTool("llvm-strip", paths, os, { required: false })?.path;
   } else {
-    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+    strip = findLlvmTool("llvm-strip", paths, os, { required: true })?.path ?? "";
     llvmStrip = strip;
   }
 
@@ -514,9 +484,9 @@ export function resolveLlvmToolchain(
   // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
   if (os === "darwin") {
-    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true })?.path;
+    dsymutil = findLlvmTool("dsymutil", paths, os, { required: true })?.path;
   } else if (os !== "windows") {
-    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
+    dsymutil = findLlvmTool("dsymutil", paths, os, { required: false })?.path;
   }
 
   // rc/mt: windows targets only. Passed to nested cmake — when
@@ -529,8 +499,8 @@ export function resolveLlvmToolchain(
   let rc: string | undefined;
   let mt: string | undefined;
   if (msvcTarget) {
-    rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
+    rc = findLlvmTool("llvm-rc", paths, os, { required: true })?.path;
+    mt = findLlvmTool("llvm-mt", paths, os, { required: false })?.path;
   }
 
   // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
@@ -562,7 +532,7 @@ export function resolveLlvmToolchain(
 
   // These are definitely defined at this point (required=true throws otherwise),
   // but TS can't see through that, so assert.
-  if (ccResult === undefined || cxx === undefined || ar === undefined) {
+  if (cxx === undefined || ar === undefined) {
     throw new BuildError("unreachable: required tool undefined");
   }
   if (strip === "") {
@@ -571,7 +541,7 @@ export function resolveLlvmToolchain(
 
   return {
     cc: ccResult.path,
-    clangVersion: ccResult.version,
+    clangVersion: ccVersion.version,
     clangResourceDir,
     cxx,
     hostCc,
@@ -656,9 +626,9 @@ export function findRustLld(os: OS): {
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
-  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent ~70ms when already
+  // system lld. When rustc uses a newer LLVM, that can make the system lld
+  // reject rust-emitted bitcode as an `Invalid record`. Pre-flight a `rustup
+  // toolchain install` so the proxy resolves instantly: idempotent ~70ms when already
   // installed, downloads on a stale agent. Skip when there's no pinned channel
   // or no rustup — the `rustc` queries below will just use whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;

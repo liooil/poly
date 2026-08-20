@@ -33,7 +33,7 @@ winget install "Visual Studio Community 2022" --override "--add Microsoft.Visual
 
 After Visual Studio, you need the following:
 
-- LLVM 21.1.8
+- The current stable LLVM release
 - Go
 - Rust (via rustup)
 - NASM
@@ -49,15 +49,13 @@ Use [Scoop](https://scoop.sh) to install these remaining tools.
 irm https://get.scoop.sh | iex
 scoop install nodejs-lts go rustup nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
-scoop install llvm@21.1.8
+scoop install llvm
 ```
 
-For Windows ARM64, download LLVM 21.1.8 directly from GitHub releases (first version with ARM64 Windows builds):
+For Windows ARM64, use Scoop's separate ARM64 LLVM manifest:
 
 ```ps1 ARM64
-# Download and install LLVM for ARM64
-Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-woa64.exe" -OutFile "$env:TEMP\LLVM-21.1.8-woa64.exe"
-Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wait
+scoop install llvm-arm64
 ```
 
 <Note>
@@ -142,7 +140,7 @@ You can also build Windows binaries (both x64 and arm64) on a Linux host. The bu
 
 ### Prerequisites
 
-1. The same LLVM version a native build uses (see `scripts/bootstrap.sh` `llvm_version_exact`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
+1. The current stable LLVM toolchain, installed so the unversioned `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` commands are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
 2. `nasm` (only needed for Windows x64; BoringSSL's x64 assembly is NASM syntax).
 3. Rust std for the Windows targets (`rust-toolchain.toml` lists them; `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc` if missing).
 4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT, Windows SDK, and ATL laid out like a Visual Studio install. Downloading these components means accepting Microsoft's license terms for them.
