@@ -24,14 +24,14 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang-cl",
     cxx: "/fake/llvm/bin/clang-cl",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "1.0.0",
+    clangResourceDir: "/fake/llvm/lib/clang/current",
     ar: "/fake/llvm/bin/llvm-lib",
     ranlib: undefined,
     ld: "/fake/llvm/bin/lld-link",
     ld64Lld: undefined,
     rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "2.0.0",
     rustSysroot: undefined,
     rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
@@ -128,7 +128,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   });
 
   test("the link uses rustc's lld-link sibling when rustc's LLVM is newer than clang's", () => {
-    // resolveConfig swaps cfg.ld so lld-link can read the LLVM-22 bitcode
+    // resolveConfig swaps cfg.ld so lld-link can read the newer LLVM bitcode
     // rustc emits under -Clinker-plugin-lto (bitcode is forward-compatible
     // only). rustc's gcc-ld/ ships every lld flavor; windows needs the
     // lld-link sibling of the host-flavored rust-lld that findRustLld()
@@ -140,7 +140,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     const rustLld = join(String(dir), "gcc-ld", "ld.lld");
     const cfg = resolveWindowsCross(
       { lto: true, baseline: false },
-      mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
+      mockToolchain({ rustLld, rustLlvmVersion: "2.0.0" }),
     );
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
     // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
@@ -150,7 +150,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 
     // Without LTO there's no bitcode skew to work around — keep the host
     // LLVM's lld-link.
-    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "2.0.0" }));
     expect(plain.ld).toBe("/fake/llvm/bin/lld-link");
 
     // If rustc's gcc-ld/ ever stops shipping lld-link, fall back to the host
@@ -159,7 +159,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
     const bareCfg = resolveWindowsCross(
       { lto: true, baseline: false },
-      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
+      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "2.0.0" }),
     );
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });

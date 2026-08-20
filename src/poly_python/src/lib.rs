@@ -996,14 +996,48 @@ impl PythonRuntime {
         })
     }
 
-    /// Names in the persistent REPL scope matching `prefix`, for Tab
-    /// completion. Skips underscore-prefixed names.
+    /// Names or object attributes matching `prefix`, for Tab completion.
     fn repl_completions(&self, prefix: &str) -> Vec<String> {
         self.interpreter.enter(|vm| {
             let scope = self.repl_scope.lock();
             let Some(scope) = scope.as_ref() else {
                 return Vec::new();
             };
+
+            if let Some((receiver, attribute_prefix)) = prefix.rsplit_once('.') {
+                let mut parts = receiver.split('.');
+                let Some(name) = parts.next() else {
+                    return Vec::new();
+                };
+                let Ok(mut value) = scope.globals.get_item(name, vm) else {
+                    return Vec::new();
+                };
+                for attribute in parts {
+                    if attribute.is_empty() {
+                        return Vec::new();
+                    }
+                    value = match value.get_attr(&vm.ctx.new_str(attribute.to_string()), vm) {
+                        Ok(value) => value,
+                        Err(_) => return Vec::new(),
+                    };
+                }
+                let Ok(attributes) = vm.dir(Some(value)) else {
+                    return Vec::new();
+                };
+                let mut names: Vec<String> = attributes
+                    .borrow_vec()
+                    .iter()
+                    .filter_map(|attribute| attribute.str(vm).ok().map(|s| s.to_string()))
+                    .filter(|name| {
+                        (!name.starts_with('_') || attribute_prefix.starts_with('_'))
+                            && name.starts_with(attribute_prefix)
+                    })
+                    .collect();
+                names.sort();
+                names.dedup();
+                return names;
+            }
+
             let mut names: Vec<String> = Vec::new();
             for (key, _) in scope.globals.items_vec() {
                 let name = match key.str(vm) {
@@ -1614,9 +1648,7 @@ pub fn repl_eval(code: &str, shared: &[SharedExport]) -> Result<String, PythonEr
         .map_err(|e| PythonError::new(format!("cannot encode repl result: {e}")))
 }
 
-/// Names in the persistent REPL scope matching `prefix` (for Tab
-/// completion). Returns a JSON array of strings; underscore-prefixed names
-/// (dunders and injected helpers) are excluded.
+/// Names or attributes in the persistent REPL scope matching `prefix`.
 pub fn repl_completions(prefix: &str) -> Result<String, PythonError> {
     let names = RUNTIME.with(|runtime| runtime.repl_completions(prefix));
     serde_json::to_string(&names)

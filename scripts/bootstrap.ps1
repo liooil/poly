@@ -256,14 +256,13 @@ function Install-CMake {
 }
 
 function Install-Llvm {
-  $LLVM_VERSION = "21.1.8"
   if (Which clang-cl) {
     return
   }
   if ($script:IsARM64) {
-    Install-Scoop-Package "llvm-arm64@$LLVM_VERSION" -Command clang-cl
+    Install-Scoop-Package "llvm-arm64" -Command clang-cl
   } else {
-    Install-Scoop-Package "llvm@$LLVM_VERSION" -Command clang-cl
+    Install-Scoop-Package "llvm" -Command clang-cl
   }
 }
 

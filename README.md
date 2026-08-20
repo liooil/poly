@@ -58,12 +58,22 @@ The common project lifecycle should use one CLI:
 ```text
 poly run app.ts        # run a TypeScript entry point
 poly run tool.py       # run a Python entry point
+poly repl python       # start directly in Python REPL mode
 poly sync              # resolve both ecosystems
 poly build app.ts      # produce a standalone application
 ```
 
-`poly run` entry-point routing is part of the current prototype. Static
-cross-language imports, `poly sync`, and `poly build` are not implemented yet.
+`poly run` entry-point routing and the multi-language REPL are part of the
+current prototype. Static cross-language imports, `poly sync`, and `poly build`
+are not implemented yet.
+
+REPL history is shared across languages. Recalling an entry from another mode
+shows it as an inline command such as `.py value = 42`, so it runs in the
+language where it was originally entered.
+
+Interactive input uses language-specific syntax highlighting in JavaScript,
+Python, Shell, SQL, and C modes, including each language's strings, comments,
+numeric literals, keywords, and constructs such as expansions or preprocessors.
 
 ## One project, two ecosystems
 

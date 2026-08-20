@@ -24,9 +24,7 @@ enum CompletionAction {
 struct CompletionOptions {
     action: CompletionAction,
     shell: Shell,
-    // Only the POSIX install path reads this (the Windows install path
-    // errors out before the `cfg(not(windows))` install body runs).
-    #[allow(dead_code)]
+    #[cfg(not(windows))]
     directory: Option<&'static [u8]>,
 }
 
@@ -299,6 +297,7 @@ impl InstallCompletionsCommand {
         CompletionOptions {
             action,
             shell: shell.unwrap_or_else(|| Self::detected_shell(fail_exit_code, action)),
+            #[cfg(not(windows))]
             directory,
         }
     }

@@ -1,5 +1,3 @@
-ARG LLVM_VERSION="21"
-ARG REPORTED_LLVM_VERSION="21.1.8"
 ARG OLD_BUN_VERSION="1.3.13"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
@@ -7,10 +5,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-amd64
 FROM base-$TARGETARCH as base
 
-ARG LLVM_VERSION
 ARG OLD_BUN_VERSION
 ARG TARGETARCH
-ARG REPORTED_LLVM_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
    CI=true \
@@ -35,7 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        libgfortran5 libc6-dev \
    && wget https://apt.llvm.org/llvm.sh \
    && chmod +x llvm.sh \
-   && ./llvm.sh ${LLVM_VERSION} all \
+   && ./llvm.sh all \
+   && llvm_root="$(ls -d /usr/lib/llvm-* | sort -V | tail -n 1)" \
+   && ln -sfn "$llvm_root" /usr/lib/llvm \
    && rm llvm.sh \
    && rm -rf /var/lib/apt/lists/*
 
@@ -75,22 +73,22 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
    && echo "/usr/lib/${ARCH_PATH}" >> /etc/ld.so.conf.d/gcc-13.conf \
    && ldconfig
 
-RUN for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
-   && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
-   && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
-   && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
-   && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
-   && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
-   && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+RUN for f in /usr/lib/llvm/bin/*; do ln -sf "$f" /usr/bin; done \
+   && ln -sf /usr/lib/llvm/bin/clang /usr/bin/clang \
+   && ln -sf /usr/lib/llvm/bin/clang++ /usr/bin/clang++ \
+   && ln -sf /usr/lib/llvm/bin/lld /usr/bin/lld \
+   && ln -sf /usr/lib/llvm/bin/lldb /usr/bin/lldb \
+   && ln -sf /usr/lib/llvm/bin/clangd /usr/bin/clangd \
+   && ln -sf /usr/lib/llvm/bin/llvm-ar /usr/bin/llvm-ar \
    && ln -sf /usr/bin/ld.lld /usr/bin/ld \
    && ln -sf /usr/bin/clang /usr/bin/cc \
    && ln -sf /usr/bin/clang++ /usr/bin/c++
 
 ENV CC="clang" \
    CXX="clang++" \
-   AR="llvm-ar-${LLVM_VERSION}" \
-   RANLIB="llvm-ranlib-${LLVM_VERSION}" \
-   LD="lld-${LLVM_VERSION}"
+   AR="llvm-ar" \
+   RANLIB="llvm-ranlib" \
+   LD="ld.lld"
 
 RUN --mount=type=tmpfs,target=/tmp \
    bash -c '\
@@ -111,8 +109,6 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "x64"; f
     curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz" \
       | tar -xz -C /usr/local --strip-components=1 && \
     node --version
-
-ENV LLVM_VERSION=${REPORTED_LLVM_VERSION}
 
 WORKDIR /workspace
 
@@ -251,7 +247,6 @@ CMD ["bun", "/var/bun/scripts/agent.mjs", "start"]
 
 FROM --platform=$BUILDPLATFORM base as bun-build-linux-local
 
-ARG LLVM_VERSION
 WORKDIR /workspace/bun
 
 COPY . /workspace/bun
@@ -267,9 +262,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rustup component add rust-src
 
 ENV PATH=/root/.cargo/bin:$PATH
-
-ENV LLVM_VERSION=${REPORTED_LLVM_VERSION}
-
 
 RUN --mount=type=tmpfs,target=/workspace/bun/build \
     ls -la \

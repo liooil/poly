@@ -1131,12 +1131,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
       if (toolchain.ld64Lld === undefined) {
         throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
+          hint: "Install the current lld package from the same toolchain as clang.",
         });
       }
       if (toolchain.llvmStrip === undefined) {
         throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install the current llvm package from the same toolchain as clang.",
         });
       }
       if (toolchain.clangResourceDir === undefined) {
@@ -1146,7 +1146,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
       if (toolchain.dsymutil === undefined) {
         throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install the current llvm package from the same toolchain as clang.",
         });
       }
       // The Mach-O flavor of whichever lld the rest of the config picked.
