@@ -1,4 +1,5 @@
 use super::ReplMode;
+use bun_core::strings;
 
 const RESET: &[u8] = b"\x1b[0m";
 const COMMENT: &[u8] = b"\x1b[2m";
@@ -148,10 +149,7 @@ fn next_non_whitespace(text: &[u8], mut i: usize) -> Option<u8> {
 }
 
 fn line_end(text: &[u8], start: usize) -> usize {
-    text[start..]
-        .iter()
-        .position(|ch| *ch == b'\n')
-        .map_or(text.len(), |offset| start + offset)
+    strings::index_of_char_usize(&text[start..], b'\n').map_or(text.len(), |offset| start + offset)
 }
 
 fn matching_operator(text: &[u8], start: usize, operators: &[&[u8]]) -> usize {
@@ -507,7 +505,7 @@ fn is_shell_word_delimiter(ch: u8) -> bool {
 }
 
 fn is_shell_assignment(word: &[u8]) -> Option<usize> {
-    let equals = word.iter().position(|ch| *ch == b'=')?;
+    let equals = strings::index_of_char_usize(word, b'=')?;
     if equals == 0 || !is_identifier_start(word[0]) {
         return None;
     }
@@ -875,7 +873,7 @@ fn highlight_sql(text: &[u8]) -> Vec<u8> {
             }
             end = (end + 2).min(text.len());
             styled(&mut out, COMMENT, &text[i..end]);
-            line_start = line_start || text[i..end].contains(&b'\n');
+            line_start = line_start || strings::contains_char(&text[i..end], b'\n');
             i = end;
             continue;
         }
@@ -904,9 +902,7 @@ fn highlight_sql(text: &[u8]) -> Vec<u8> {
             continue;
         }
         if ch == b'[' {
-            let end = text[i + 1..]
-                .iter()
-                .position(|next| *next == b']')
+            let end = strings::index_of_char_usize(&text[i + 1..], b']')
                 .map_or(text.len(), |offset| i + offset + 2);
             styled(&mut out, TYPE, &text[i..end]);
             i = end;
@@ -1099,9 +1095,7 @@ fn highlight_c(text: &[u8]) -> Vec<u8> {
             continue;
         }
         if include_header && ch == b'<' {
-            let end = text[i + 1..]
-                .iter()
-                .position(|next| *next == b'>')
+            let end = strings::index_of_char_usize(&text[i + 1..], b'>')
                 .map_or(text.len(), |offset| i + offset + 2);
             styled(&mut out, STRING, &text[i..end]);
             i = end;
@@ -1121,7 +1115,7 @@ fn highlight_c(text: &[u8]) -> Vec<u8> {
             }
             end = (end + 2).min(text.len());
             styled(&mut out, COMMENT, &text[i..end]);
-            line_start = line_start || text[i..end].contains(&b'\n');
+            line_start = line_start || strings::contains_char(&text[i..end], b'\n');
             i = end;
             continue;
         }

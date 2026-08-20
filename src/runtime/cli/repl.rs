@@ -584,22 +584,18 @@ impl LineEditor {
     }
 
     fn contains_newline(&self) -> bool {
-        self.buffer.contains(&b'\n')
+        strings::contains_char(&self.buffer, b'\n')
     }
 
     fn move_line_up(&mut self) -> bool {
-        let current_start = self.buffer[..self.cursor]
-            .iter()
-            .rposition(|ch| *ch == b'\n')
+        let current_start = strings::last_index_of_char(&self.buffer[..self.cursor], b'\n')
             .map_or(0, |position| position + 1);
         if current_start == 0 {
             return false;
         }
 
         let previous_end = current_start - 1;
-        let previous_start = self.buffer[..previous_end]
-            .iter()
-            .rposition(|ch| *ch == b'\n')
+        let previous_start = strings::last_index_of_char(&self.buffer[..previous_end], b'\n')
             .map_or(0, |position| position + 1);
         let column = self.cursor - current_start;
         self.cursor = previous_start + column.min(previous_end - previous_start);
@@ -613,21 +609,16 @@ impl LineEditor {
     }
 
     fn move_line_down(&mut self) -> bool {
-        let current_start = self.buffer[..self.cursor]
-            .iter()
-            .rposition(|ch| *ch == b'\n')
+        let current_start = strings::last_index_of_char(&self.buffer[..self.cursor], b'\n')
             .map_or(0, |position| position + 1);
-        let Some(current_end_offset) = self.buffer[self.cursor..]
-            .iter()
-            .position(|ch| *ch == b'\n')
+        let Some(current_end_offset) =
+            strings::index_of_char_usize(&self.buffer[self.cursor..], b'\n')
         else {
             return false;
         };
         let current_end = self.cursor + current_end_offset;
         let next_start = current_end + 1;
-        let next_end = self.buffer[next_start..]
-            .iter()
-            .position(|ch| *ch == b'\n')
+        let next_end = strings::index_of_char_usize(&self.buffer[next_start..], b'\n')
             .map_or(self.buffer.len(), |position| next_start + position);
         let column = self.cursor - current_start;
         self.cursor = next_start + column.min(next_end - next_start);
@@ -1867,9 +1858,7 @@ impl<'a> Repl<'a> {
         let mut line_index = 0usize;
 
         loop {
-            let end = line[start..]
-                .iter()
-                .position(|ch| *ch == b'\n')
+            let end = strings::index_of_char_usize(&line[start..], b'\n')
                 .map_or(line.len(), |offset| start + offset);
             let position_on_line = byte_position.min(end);
             let text_width =
@@ -1916,7 +1905,7 @@ impl<'a> Repl<'a> {
         if self.input_mode != InputMode::Normal
             || cursor != line.len()
             || line.is_empty()
-            || line.contains(&b'\n')
+            || strings::contains_char(line, b'\n')
         {
             return Vec::new();
         }
@@ -4300,7 +4289,7 @@ fn completion_receiver(line: &[u8], word_start: usize) -> Option<(usize, &[u8])>
 
     let expression = &line[receiver_start..receiver_end];
     if expression.is_empty()
-        || expression.split(|ch| *ch == b'.').any(|segment| {
+        || strings::split(expression, b".").any(|segment| {
             segment.is_empty()
                 || !matches!(segment[0], b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$')
                 || !segment
@@ -4320,7 +4309,7 @@ fn resolve_js_completion_target(
     lookup: CompletionLookup,
 ) -> Option<JSValue> {
     let mut target = global.to_js_value();
-    for property in expression.split(|ch| *ch == b'.') {
+    for property in strings::split(expression, b".") {
         target = if lookup == CompletionLookup::Preview {
             // SAFETY: `global` is live and `property` remains valid for the call.
             let value = unsafe {
@@ -4429,7 +4418,11 @@ fn common_completion_suffix(candidates: &[Vec<u8>], typed_len: usize) -> Vec<u8>
 }
 
 fn is_safe_js_preview_expression(code: &[u8]) -> bool {
-    if code.is_empty() || code.len() > 512 || code.contains(&b'\n') || code.contains(&b'\r') {
+    if code.is_empty()
+        || code.len() > 512
+        || strings::contains_char(code, b'\n')
+        || strings::contains_char(code, b'\r')
+    {
         return false;
     }
 

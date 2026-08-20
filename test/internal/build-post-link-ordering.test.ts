@@ -26,14 +26,14 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cxx: "/fake/llvm/bin/clang++",
     hostCc: undefined,
     hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "1.0.0",
+    clangResourceDir: "/fake/llvm/lib/clang/current",
     ar: "/fake/llvm/bin/llvm-ar",
     ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "2.0.0",
     rustSysroot: undefined,
     rustHostTriple: undefined,
     strip: "/fake/bin/strip",
@@ -63,8 +63,8 @@ function hostConfig(partial: PartialConfig, buildDir: string): Config {
   return resolveConfig(
     { buildDir, ...partial },
     // jsRuntime = the strip output: what resolveToolchain() produces when
-    // `bun` on PATH resolves into build/release/.
-    mockToolchain({ jsRuntime: join(buildDir, "bun") }),
+    // `poly` on PATH resolves into build/release/.
+    mockToolchain({ jsRuntime: join(buildDir, "poly") }),
   );
 }
 
@@ -88,14 +88,14 @@ describe("emitPostLink ninja ordering", () => {
     const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", []);
     const out = n.toString();
 
-    expect(strippedExe).toBe(resolve(buildDir, `bun${cfg.exeSuffix}`));
-    // strip writes `bun`; the smoke_test wrapper execs cfg.jsRuntime
-    // (= `bun` here). Without `|| bun` ninja schedules them concurrently
+    expect(strippedExe).toBe(resolve(buildDir, `poly${cfg.exeSuffix}`));
+    // strip writes `poly`; the smoke_test wrapper execs cfg.jsRuntime
+    // (= `poly` here). Without `|| poly` ninja schedules them concurrently
     // and the wrapper sees a half-written file.
     expect(buildEdge(out, "smoke_test")).toBe(
-      `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
+      `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || poly${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+    expect(buildEdge(out, "strip")).toBe(`build poly${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
   });
 
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
@@ -112,7 +112,7 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-debug.smoke-test-passed: smoke_test bun-debug${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "phony")).toBe(`build bun: phony bun-debug${cfg.exeSuffix}`);
+    expect(buildEdge(out, "phony")).toBe(`build poly: phony bun-debug${cfg.exeSuffix}`);
   });
 
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes
@@ -130,7 +130,7 @@ describe("emitPostLink ninja ordering", () => {
     const out = n.toString();
 
     expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
-    expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
+    expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || poly");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
     // binary can't run on this host), so the strip race can't happen there.
     expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile");
