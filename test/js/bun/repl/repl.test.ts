@@ -1600,19 +1600,20 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
 
   test("inline completion does not invoke getters or Proxy traps", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
+      // Underscore-prefixed globals are skipped by JS-to-Python sync, so trap reads here can only come from completion.
       send(
-        "let getterReads = 0, proxyReads = 0; const holder = {}; " +
-          "Object.defineProperty(holder, 'target', { get() { getterReads++; return { previewValue: 1 } } }); " +
-          "const proxyTarget = new Proxy({ previewValue: 1 }, { get(target, key, receiver) { proxyReads++; return Reflect.get(target, key, receiver) } });\n",
+        "let getterReads = 0, proxyReads = 0; const _holder = {}; " +
+          "Object.defineProperty(_holder, 'target', { get() { getterReads++; return { previewValue: 1 } } }); " +
+          "const _proxyTarget = new Proxy({ previewValue: 1 }, { get(target, key, receiver) { proxyReads++; return Reflect.get(target, key, receiver) } }); void 0;\n",
       );
       await waitFor(/\u276f|> /);
 
-      send("holder.target.previewV");
-      await waitFor("holder.target.previewV");
+      send("_holder.target.previewV");
+      await waitFor("_holder.target.previewV");
       send("\x03");
       await waitFor(/\u276f|> /);
-      send("proxyTarget.previewV");
-      await waitFor("proxyTarget.previewV");
+      send("_proxyTarget.previewV");
+      await waitFor("_proxyTarget.previewV");
       send("\x03");
       await waitFor(/\u276f|> /);
       send("getterReads + proxyReads\n");

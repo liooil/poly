@@ -48,6 +48,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSGlobalLexicalEnvironment.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
@@ -6571,6 +6572,26 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getPropertyVMInquiry(
     if (object->type() == JSC::ProxyObjectType) {
         return {};
     }
+
+    if (object == globalObject) {
+        JSC::JSGlobalLexicalEnvironment* lexicalEnvironment = globalObject->globalLexicalEnvironment();
+        JSC::PropertySlot lexicalSlot(lexicalEnvironment, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+        scope.assertNoExceptionExceptTermination();
+        bool hasLexicalProperty = lexicalEnvironment->getPropertySlot(globalObject, identifier, lexicalSlot);
+        scope.assertNoExceptionExceptTermination();
+        if (hasLexicalProperty) {
+            if (lexicalSlot.isAccessor() || lexicalSlot.isCustom() || lexicalSlot.isTaintedByOpaqueObject()) {
+                return {};
+            }
+            return JSC::JSValue::encode(lexicalSlot.getPureResult());
+        }
+
+        JSC::SymbolTableEntry globalEntry = globalObject->symbolTable()->get(identifier.impl());
+        if (!globalEntry.isNull()) {
+            return JSC::JSValue::encode(globalObject->variableAt(globalEntry.scopeOffset()).get());
+        }
+    }
+
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
     scope.assertNoExceptionExceptTermination();
     bool hasProperty = object->getPropertySlot(globalObject, identifier, slot);
@@ -6592,7 +6613,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     bool allowSideEffects)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
