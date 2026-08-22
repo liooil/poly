@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,8 +13,8 @@ const publicTopLevelCommands = [
   "ci",
   "completions",
   "create",
+  "dedupe",
   "exec",
-  "feedback",
   "help",
   "info",
   "init",
@@ -24,6 +25,7 @@ const publicTopLevelCommands = [
   "patch-commit",
   "pm",
   "poly",
+  "prune",
   "publish",
   "remove",
   "repl",
@@ -70,9 +72,9 @@ describe("bun", () => {
       const output = await runHelp(["test", "--help"]);
 
       expect(output).toContain("--rerun-each=<NUMBER>");
-      expect(output).toContain("Re-run each test file the specified number of times");
+      expect(output).toContain("Re-run each test file <NUMBER> times");
       expect(output).toContain("--bail=<NUMBER>?");
-      expect(output).toContain("Exit the test suite after the specified number of failures");
+      expect(output).toContain("Exit the test suite after <NUMBER> failures");
       expect(output).toContain("--test-name-pattern/--grep=<STR>");
       expect(output).not.toContain("Re-run each test file  times");
       expect(output).not.toContain("after  failures");
@@ -134,13 +136,6 @@ describe("bun", () => {
       expect(pmScanHelp).not.toContain("bun pm scan");
     });
 
-    test("feedback help uses Poly spelling", async () => {
-      const feedbackHelp = await runHelp(["feedback", "--help"]);
-
-      expect(feedbackHelp).toContain("poly feedback");
-      expect(feedbackHelp).not.toContain("bun feedback");
-    });
-
     test("x help uses Poly spelling", async () => {
       const xHelp = await runHelp(["x", "--help"]);
 
@@ -155,10 +150,12 @@ describe("bun", () => {
         "patch",
         "patch-commit",
         "add",
+        "dedupe",
         "remove",
         "link",
         "unlink",
         "outdated",
+        "prune",
         "publish",
         "audit",
         "info",
@@ -175,13 +172,15 @@ describe("bun", () => {
         expect(output).toContain("https://github.com/liooil/poly");
       }
 
-      expect(packageHelp[10]).toContain("at or above the selected severity");
-      expect(packageHelp[10]).not.toContain("severity greater than or equal to  (");
+      const helpByCommand = new Map(packageCommands.map((command, index) => [command, packageHelp[index]!]));
 
-      expect(packageHelp[12]).toContain("Usage: poly why [flags] <package>");
-      expect(packageHelp[12]).toContain("--depth=<NUM>");
-      expect(packageHelp[12]).not.toContain("<@version>");
-      expect(packageHelp[12]).not.toContain("[property path]");
+      expect(helpByCommand.get("audit")).toContain("severity greater than or equal to <level>");
+      expect(helpByCommand.get("audit")).not.toContain("severity greater than or equal to  (");
+
+      expect(helpByCommand.get("why")).toContain("Usage: poly why [flags] <package>");
+      expect(helpByCommand.get("why")).toContain("--depth=<NUM>");
+      expect(helpByCommand.get("why")).not.toContain("<@version>");
+      expect(helpByCommand.get("why")).not.toContain("[property path]");
     });
   });
 
@@ -213,6 +212,120 @@ describe("bun", () => {
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });
     }
+  });
+
+  // #39762: a piped stream must not get ANSI codes because the other stream
+  // is a TTY. `bun test | pbcopy` copied raw escape codes to the clipboard
+  // since stderr (a TTY) forced colors onto the piped stdout.
+  //
+  // openpty via bun:ffi so one stdio fd can be a real TTY while the other is
+  // a pipe. glibc keeps openpty in libutil; musl and macOS keep everything in
+  // libc. Same pattern as test/js/bun/terminal/terminal-spawn.test.ts.
+  describe.skipIf(isWindows)("per-stream color detection", () => {
+    const colorEnv = {
+      ...bunEnv,
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
+      TERM: "xterm-256color",
+    };
+
+    const openptyDecl = {
+      openpty: {
+        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    } as const;
+    const closeDecl = {
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+
+    function openPty(): { slave: number; close(): void } {
+      const lib =
+        process.platform === "darwin"
+          ? dlopen("libc.dylib", { ...openptyDecl, ...closeDecl })
+          : isMusl
+            ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
+                ...openptyDecl,
+                ...closeDecl,
+              })
+            : dlopen("libutil.so.1", openptyDecl);
+      const libc = process.platform === "darwin" || isMusl ? lib : dlopen("libc.so.6", closeDecl);
+
+      const masterBuf = new Int32Array(1);
+      const slaveBuf = new Int32Array(1);
+      expect((lib.symbols as any).openpty(masterBuf, slaveBuf, null, null, null)).toBe(0);
+      return {
+        slave: slaveBuf[0],
+        close() {
+          (libc.symbols as any).close(masterBuf[0]);
+          (libc.symbols as any).close(slaveBuf[0]);
+        },
+      };
+    }
+
+    test.concurrent("piped stdout stays plain when stderr is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: pty.slave,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).not.toMatch(/\u001b\[/);
+        expect(stdout).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    test.concurrent("piped stderr stays plain when stdout is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.error({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: pty.slave,
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toMatch(/\u001b\[/);
+        expect(stderr).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    // Guard against overcorrection: a stream that is itself a TTY keeps
+    // colors.
+    test.concurrent("a tty stdout still gets colors", async () => {
+      let output = "";
+      const decoder = new TextDecoder();
+      await using terminal = new Bun.Terminal({
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      });
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+        env: colorEnv,
+        terminal,
+      });
+      await proc.exited;
+      // PTY data can still be in flight after waitpid. Poll with a deadline
+      // (below the 5s test timeout) so a regression fails here with the
+      // captured output, not by timeout.
+      const deadline = Date.now() + 2_000;
+      while (!/\u001b\[\d+m/.test(output) && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
+      expect(output).toMatch(/\u001b\[\d+m/);
+    });
   });
 
   describe("revision", () => {
@@ -309,7 +422,6 @@ describe("bun", () => {
       }
     });
   });
-
   describe("completion scripts", () => {
     function createPolyxStubs(dir: string) {
       for (const name of ["polyx", "polyx-debug"]) {
@@ -581,6 +693,176 @@ describe("bun", () => {
       expect(candidates).not.toContain("dev");
       expect(candidates).not.toContain("discord");
       expect(completionCandidates).toEqual(expect.arrayContaining(["bash", "zsh", "fish", "install"]));
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // On Windows `poly completions` installs polyx as a hardlink (or a .cmd shim) instead of a symlink.
+  describe.skipIf(isWindows)("completions", () => {
+    const polyxName = isDebug ? "polyx-debug" : "polyx";
+
+    test("installs a polyx symlink to the executable, falling back through the install directories", async () => {
+      using dir = tempDir("completions-polyx", {
+        "bin": {},
+        "completions": {},
+        "empty-path": {},
+        "install": { bin: {} },
+        "home-empty": {},
+        "home-poly": { ".bun": { bin: {} } },
+        "home-local": { ".local": { bin: {} } },
+      });
+      // Run a private copy of the executable so that the first candidate location, the executable's
+      // own directory, is inside the temporary directory. A hardlink avoids copying the binary; fall
+      // back to a copy when the temporary directory is on another filesystem.
+      const exe = join(String(dir), "bin", "poly");
+      try {
+        fs.linkSync(fs.realpathSync(bunExe()), exe);
+      } catch {
+        fs.copyFileSync(bunExe(), exe);
+      }
+      // The link is created against the resolved executable path.
+      const exeRealpath = fs.realpathSync(exe);
+
+      async function installPolyx(env: Record<string, string | undefined>) {
+        await using proc = Bun.spawn({
+          cmd: [exe, "completions", "install", "bash", "--dir", join(String(dir), "completions")],
+          env: {
+            ...bunEnv,
+            PATH: join(String(dir), "empty-path"),
+            IS_BUN_AUTO_UPDATE: "1",
+            BUN_INSTALL: undefined,
+            ...env,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Installed completions");
+        expect(exitCode).toBe(0);
+      }
+
+      // 1. Next to the executable.
+      await installPolyx({ HOME: join(String(dir), "home-empty") });
+      expect(fs.readlinkSync(join(String(dir), "bin", polyxName))).toBe(exeRealpath);
+
+      // That link now exists, so every following run falls through to the next location.
+      // 2. $BUN_INSTALL/bin
+      await installPolyx({ HOME: join(String(dir), "home-empty"), BUN_INSTALL: join(String(dir), "install") });
+      expect(fs.readlinkSync(join(String(dir), "install", "bin", polyxName))).toBe(exeRealpath);
+
+      // 3. $HOME/.bun/bin
+      await installPolyx({ HOME: join(String(dir), "home-poly") });
+      expect(fs.readlinkSync(join(String(dir), "home-poly", ".bun", "bin", polyxName))).toBe(exeRealpath);
+
+      // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
+      await installPolyx({ HOME: join(String(dir), "home-local") });
+      expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", polyxName))).toBe(exeRealpath);
+    });
+  });
+  describe("--help preserves <placeholder> text", () => {
+    const env = { ...bunEnv, NO_COLOR: "1" };
+    const usage: [string, string][] = [
+      ["install", "poly install [flags] <name>@<version>"],
+      ["add", "poly add [flags] <package><@version>"],
+      ["remove", "poly remove [flags] [<packages>]"],
+      ["update", "poly update [flags] <name>@<version>"],
+      ["link", "poly link [flags] [<packages>]"],
+      ["patch", "poly patch [flags or options] <package>@<version>"],
+      ["patch-commit", "poly patch-commit [flags or options] <directory>"],
+      ["info", "poly info [flags] <package>[@<version>]"],
+    ];
+    test.concurrent.each(usage)("poly %s --help usage line", async (cmd, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.startsWith("Usage:")) ?? "";
+      expect(line).toBe(`Usage: ${expected}`);
+      expect(exitCode).toBe(0);
+    });
+
+    const flags: [string, string, string][] = [
+      ["audit", "--audit-level", "greater than or equal to <level> (low,"],
+      ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
+      ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
+      ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+      ["add", "-F, --filter", "Add the package(s) to the matching workspaces instead of the current package"],
+      ["add", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
+      ["remove", "-F, --filter", "Remove the package(s) from the matching workspaces instead of the current package"],
+      ["install", "-F, --filter", "Install packages for the matching workspaces"],
+      ["install", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
+      ["audit", "--ignore", "Ignore advisories by GHSA or numeric advisory ID (repeatable)"],
+      ["audit", "-L, --latest", "Also apply fixes your declared ranges exclude, rewriting package.json"],
+      ["update", "-p, --production", "Only update dependencies and optionalDependencies (alias: --prod)"],
+      ["install", "-p, --production", "Don't install devDependencies"],
+    ];
+    test.concurrent.each(flags)("poly %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.includes(flag)) ?? "";
+      expect(line).toContain(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("poly add --help usage line is intact with FORCE_COLOR=1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "add", "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      // <blue>\<package\><r> renders to \x1b[34m<package>\x1b[0m, not \x1b[34m\x1b[0m
+      expect(out).toContain("\x1b[34m<package>\x1b[0m");
+      // raw tag markup must not leak through
+      expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("--help lists package manager commands and examples", () => {
+    const env = { ...bunEnv, NO_COLOR: "1" };
+    const lines: [string, string[], RegExp[]][] = [
+      [
+        "poly --help",
+        [],
+        [
+          /^ {2}dedupe +Remove duplicate versions from the lockfile$/m,
+          /^ {2}prune +Remove packages that are not in the lockfile from node_modules$/m,
+        ],
+      ],
+      [
+        "poly pm --help",
+        ["pm"],
+        [
+          /^ {2}poly list +list the dependency tree according to the current lockfile$/m,
+          /^ {2}poly pm licenses +list installed packages grouped by license$/m,
+        ],
+      ],
+      [
+        "poly add --help",
+        ["add"],
+        [
+          /^ {2}Add a dependency to a specific workspace in a monorepo\n {2}poly add zod --filter api$/m,
+          /^ {2}Add to the workspace catalog instead of pinning a version\n {2}poly add --catalog react\n {2}poly add --catalog=testing vitest$/m,
+        ],
+      ],
+      [
+        "poly audit --help",
+        ["audit"],
+        [
+          /^ {2}poly audit fix upgrades vulnerable packages to the lowest safe version that still satisfies every dependent's range\.$/m,
+          /^ {2}Upgrade vulnerable packages in bun\.lock and node_modules; package\.json is only changed when an exact pin has to be bumped\.\n {2}poly audit fix$/m,
+          /^ {2}Show what poly audit fix would change without changing anything\.\n {2}poly audit fix --dry-run$/m,
+          /^ {2}Also apply fixes that your package\.json ranges exclude, rewriting those ranges\.\n {2}poly audit fix --latest$/m,
+        ],
+      ],
+    ];
+    test.concurrent.each(lines)("%s", async (_, args, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = (stdout + stderr).replaceAll("\r\n", "\n");
+      for (const re of expected) expect(out).toMatch(re);
+      expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
     });
   });

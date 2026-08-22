@@ -603,17 +603,12 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             buf1_u8
                 .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
                 .cast::<[u16; 5]>()
-                .write_unaligned([
-                    'p' as u16,
-                    'o' as u16,
-                    'l' as u16,
-                    'y' as u16,
-                    'x' as u16,
-                ]);
+                .write_unaligned(['p' as u16, 'o' as u16, 'l' as u16, 'y' as u16, 'x' as u16]);
         }
 
         let path_len_bytes: u16 = u16::try_from(
-            image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 5/* "polyx".len */),
+            image_path_b_len
+                + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 5/* "polyx".len */),
         )
         .unwrap();
         let mut nt_name = UNICODE_STRING {

@@ -116,15 +116,6 @@ const BuiltinModule = {
     // Bare names; completion.js prefixes them with "node:" itself.
     return ["test"];
   },
-  exists(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
-  },
 };
 
 // ---- internal/modules/esm/get_format ----------------------------------------------
@@ -308,9 +299,7 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_WRITABLE = 1;
 const ONLY_ENUMERABLE = 2;
-const ONLY_CONFIGURABLE = 4;
 const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
@@ -390,10 +379,6 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_WRITABLE,
-    ONLY_ENUMERABLE,
-    ONLY_CONFIGURABLE,
-    SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
   getOwnNonIndexProperties,

@@ -79,18 +79,27 @@ _poly_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
+    local SUBCOMMANDS="add audit build ci completions create dedupe exec help info init install link outdated patch patch-commit pm poly prune publish remove repl run test unlink update upgrade why x";
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
-    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
+    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
     PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
+    PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
+
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
@@ -103,11 +112,22 @@ _poly_completions() {
         --server-bunfile) _file_arguments "!*.server.bun" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|install|i)
+                a|add|remove|rm|install|i|dedupe|update|up)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
             esac
             return ;;
+        --omit)
+            COMPREPLY=( $(compgen -W "dev optional peer" -- "${cur_word}") );
+            return;;
+        -F|--filter)
+            case "${COMP_WORDS[1]}" in
+                a|add|remove|rm|i|install|prune|update|up) return;;
+            esac
+            ;;
+        --linker)
+            COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
+            return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
@@ -120,7 +140,7 @@ _poly_completions() {
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;
         --target)
-            COMPREPLY=( $(compgen -W "browser node poly" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") );
             return;;
         -l|--loader)
             [[ "${cur_word}" =~ (:) ]] && {
@@ -144,10 +164,33 @@ _poly_completions() {
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
             return;;
-        remove|rm|i|install|link|unlink)
+        remove|rm|i|install)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        update|up)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        link|unlink)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        dedupe)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        prune)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}";
+            return;;
+        audit)
+            COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
             return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
@@ -166,7 +209,7 @@ _poly_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "bin ls licenses cache default-trusted diff hash hash-print hash-string migrate pack pkg scan trust untrusted version view whoami why" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

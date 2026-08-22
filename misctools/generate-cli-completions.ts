@@ -1,24 +1,24 @@
 #!/usr/bin/env bun
 /**
- * CLI Flag Parser for Bun Commands
+ * CLI Flag Parser for Poly Commands
  *
- * This script reads the --help menu for every Bun command and generates JSON
+ * This script reads the --help menu for every Poly command and generates JSON
  * containing all flag information, descriptions, and whether they support
  * positional or non-positional arguments.
  *
  * Handles complex cases like:
- * - Nested subcommands (bun pm cache rm)
- * - Command aliases (bun i = bun install, bun a = bun add)
+ * - Nested subcommands (poly pm cache rm)
+ * - Command aliases (poly i = poly install, poly a = poly add)
  * - Dynamic completions (scripts, packages, files)
  * - Context-aware flags
- * - Special cases like bare 'bun' vs 'bun run'
+ * - Special cases like bare 'poly' vs 'poly run'
  *
  * Output is saved to completions/poly-cli.json for use in generating
  * shell completions (fish, bash, zsh).
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 interface FlagInfo {
@@ -89,7 +89,7 @@ interface CompletionData {
       };
     };
   };
-  bunGetCompletes: {
+  polyGetCompletes: {
     available: boolean;
     commands: {
       scripts: string; // "poly getcompletes s" or "poly getcompletes z"
@@ -100,7 +100,7 @@ interface CompletionData {
   };
 }
 
-const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "poly";
+const POLY_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "poly";
 
 /**
  * Parse flag line from help output
@@ -160,6 +160,9 @@ function parseFlag(line: string): FlagInfo | null {
         continue;
       }
 
+      // The help printer drops escaped <placeholder> tags, leaving doubled spaces behind
+      description = description.replace(/\s{2,}/g, " ").trim();
+
       // Extract additional info from description
       const hasValue = !!valueSpec;
       let valueType: string | undefined;
@@ -188,7 +191,7 @@ function parseFlag(line: string): FlagInfo | null {
       return {
         name: longName.replace(/^--/, ""),
         shortName: shortName?.replace(/^-/, ""),
-        description: description.trim(),
+        description,
         hasValue,
         valueType,
         defaultValue,
@@ -283,12 +286,12 @@ process.once("beforeExit", () => {
 });
 
 /**
- * Execute bun command and get help output
+ * Execute a Poly command and get help output
  */
 async function getHelpOutput(command: string[]): Promise<string> {
   try {
     const proc = spawn({
-      cmd: [BUN_EXECUTABLE, ...command, "--help"],
+      cmd: [POLY_EXECUTABLE, ...command, "--help"],
       stdout: "pipe",
       stderr: "pipe",
       cwd: temppackagejson,
@@ -325,11 +328,13 @@ function parsePmSubcommands(helpText: string): Record<string, SubcommandInfo> {
       break;
     }
 
-    if (inCommands && line.match(/^\s+bun pm \w+/)) {
-      // Parse lines like: "bun pm pack                 create a tarball of the current workspace"
-      const match = line.match(/^\s+bun pm (\S+)(?:\s+(.+))?$/);
+    if (inCommands && line.match(/^\s+poly (?:pm )?\S+/)) {
+      // Parse lines like: "poly pm pack                create a tarball of the current workspace"
+      const match = line.match(/^\s+poly (?:pm )?(\S+)(?:\s+(.+))?$/);
       if (match) {
-        const [, name, description = ""] = match;
+        const parsedName = match[1]!;
+        const description = match[2] ?? "";
+        const name = parsedName === "list" ? "ls" : parsedName;
         subcommands[name] = {
           name,
           description: description.trim(),
@@ -446,7 +451,7 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
 
     // Parse examples
     if (inExamples && trimmed && !trimmed.startsWith("Full documentation")) {
-      if (trimmed.startsWith("bun ") || trimmed.startsWith("./") || trimmed.startsWith("Bundle")) {
+      if (trimmed.startsWith("poly ") || trimmed.startsWith("./") || trimmed.startsWith("Bundle")) {
         command.examples.push(trimmed);
       }
     }
@@ -511,7 +516,7 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
 }
 
 /**
- * Get list of main commands from bun --help
+ * Get list of main commands from poly --help
  */
 async function getMainCommands(): Promise<string[]> {
   const helpText = await getHelpOutput([]);
@@ -527,15 +532,15 @@ async function getMainCommands(): Promise<string[]> {
       continue;
     }
 
-    // Stop when we hit the "Flags:" section
-    if (inCommands && trimmed === "Flags:") {
+    // The root help can continue with language-specific usage sections and
+    // does not necessarily have a Flags section.
+    if (inCommands && trimmed !== "" && !/^\s/.test(line)) {
       break;
     }
 
-    if (inCommands && line.match(/^\s+\w+/)) {
-      // Extract command name (first word after whitespace)
-      const match = line.match(/^\s+(\w+)/);
-      if (match) {
+    if (inCommands) {
+      const match = line.match(/^ {2}([a-z][\w-]*)\b/);
+      if (match && !commands.includes(match[1])) {
         commands.push(match[1]);
       }
     }
@@ -588,10 +593,11 @@ function parseGlobalFlags(helpText: string): FlagInfo[] {
 function addCommandAliases(commands: Record<string, CommandInfo>): void {
   const aliasMap: Record<string, string[]> = {
     "install": ["i"],
+    "update": ["up"],
     "add": ["a"],
     "remove": ["rm"],
     "create": ["c"],
-    "x": ["bunx"], // bunx is an alias for bun x
+    "x": ["polyx"], // polyx is an alias for poly x
   };
 
   for (const [command, aliases] of Object.entries(aliasMap)) {
@@ -605,7 +611,7 @@ function addCommandAliases(commands: Record<string, CommandInfo>): void {
  * Main function to generate completion data
  */
 async function generateCompletions(): Promise<void> {
-  console.log("🔍 Discovering Bun commands...");
+  console.log("🔍 Discovering Poly commands...");
 
   // Get main help and extract commands
   const mainHelpText = await getHelpOutput([]);
@@ -629,13 +635,13 @@ async function generateCompletions(): Promise<void> {
         },
       },
     },
-    bunGetCompletes: {
+    polyGetCompletes: {
       available: true,
       commands: {
-        scripts: "bun getcompletes s", // or "bun getcompletes z" for scripts with descriptions
-        binaries: "bun getcompletes b",
-        packages: "bun getcompletes a", // takes prefix as argument
-        files: "bun getcompletes j", // JavaScript/TypeScript files
+        scripts: "poly getcompletes s", // or "poly getcompletes z" for scripts with descriptions
+        binaries: "poly getcompletes b",
+        packages: "poly getcompletes a", // takes prefix as argument
+        files: "poly getcompletes j", // JavaScript/TypeScript files
       },
     },
   };

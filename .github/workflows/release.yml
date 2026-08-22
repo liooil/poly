@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           asset_version="$GITHUB_REF_NAME"
-          bun_upstream="cbe3e18a769f446222d5b8009b5a76943153d1ba"
+          bun_upstream="9a8ed316e0082057e2b43bd5d3311fdff7c9c343"
           mkdir -p packages/linux-x64 packages/windows-x64 release-assets
 
           install -m 0755 artifacts/poly-linux-x64/poly packages/linux-x64/poly

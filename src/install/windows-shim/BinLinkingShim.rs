@@ -327,9 +327,9 @@ mod host {
                 if program.is_empty() {
                     return Ok(Self::parse_from_bin_path(bin_path));
                 }
-                let is_node_or_bun =
-                    eql_comptime(program, b"poly") || eql_comptime(program, b"bun")
-                        || eql_comptime(program, b"node");
+                let is_node_or_bun = eql_comptime(program, b"poly")
+                    || eql_comptime(program, b"bun")
+                    || eql_comptime(program, b"node");
                 return Ok(Some(Shebang::init(rest, is_node_or_bun)));
             }
 

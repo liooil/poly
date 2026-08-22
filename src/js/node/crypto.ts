@@ -50,7 +50,7 @@ const {
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
-  pbkdf2: _pbkdf2,
+  pbkdf2,
   pbkdf2Sync,
   timingSafeEqual,
   randomInt,
@@ -139,25 +139,6 @@ var _subtle = webcrypto.subtle;
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
-
-// TODO: move this to zig
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
 
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;

@@ -83,8 +83,10 @@ impl ReplCommand {
             )?;
         }
 
-        // Initialize JSC
-        jsc::initialize(true); // true for eval mode
+        jsc::initialize(jsc::InitializeOptions {
+            eval_mode: true,
+            ..Default::default()
+        });
 
         bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
