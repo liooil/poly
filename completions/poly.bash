@@ -79,7 +79,7 @@ _poly_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="add audit build ci completions create dedupe exec help info init install link outdated patch patch-commit pm poly prune publish remove repl run test unlink update upgrade why x";
+    local SUBCOMMANDS="add audit build ci completions create dedupe exec help info init install link outdated patch patch-commit pm poly prune publish remove repl run sync test unlink update upgrade why x";
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
@@ -128,7 +128,7 @@ _poly_completions() {
         --linker)
             COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
             return;;
-        --cwd|--public-dir)
+        --cwd|--public-dir|--project)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
         --dir)
@@ -200,6 +200,9 @@ _poly_completions() {
             return;;
         repl)
             COMPREPLY=( $(compgen -W "js python py shell sh sql c --help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
+            return;;
+        sync)
+            _long_short_completion "--frozen --project --help -h" "-h";
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";

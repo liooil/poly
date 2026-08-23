@@ -30,6 +30,7 @@ const publicTopLevelCommands = [
   "remove",
   "repl",
   "run",
+  "sync",
   "test",
   "unlink",
   "update",
@@ -143,6 +144,15 @@ describe("bun", () => {
       expect(xHelp).not.toContain("Usage: bun x");
     });
 
+    test("sync help documents the frozen-lock boundary", async () => {
+      const syncHelp = await runHelp(["sync", "--help"]);
+
+      expect(syncHelp).toContain("Usage: poly sync --frozen [options]");
+      expect(syncHelp).toContain("--project <path>");
+      expect(syncHelp).toContain("Resolution and lockfile updates are not implemented yet.");
+      expect(syncHelp).not.toContain("Usage: bun sync");
+    });
+
     test("package command help uses Poly spelling", async () => {
       const packageCommands = [
         "install",
@@ -181,6 +191,41 @@ describe("bun", () => {
       expect(helpByCommand.get("why")).toContain("--depth=<NUM>");
       expect(helpByCommand.get("why")).not.toContain("<@version>");
       expect(helpByCommand.get("why")).not.toContain("[property path]");
+    });
+  });
+
+  describe("sync", () => {
+    test("without --frozen reports the unresolved boundary", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sync"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("lock generation is not implemented yet");
+      expect(stderr).toContain("poly sync --frozen");
+      expect(exitCode).toBe(1);
+    });
+
+    test("--frozen requires an existing uv.lock", async () => {
+      using dir = tempDir("poly-sync-missing-lock", {
+        "pyproject.toml": `[project]\nname = "missing-lock"\nversion = "1.0.0"\nrequires-python = ">=3.12"\n\n[tool.uv]\npackage = false\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sync", "--frozen", "--project", String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("failed to read uv lockfile");
+      expect(stderr).toContain("uv.lock");
+      expect(exitCode).toBe(1);
     });
   });
 

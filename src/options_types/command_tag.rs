@@ -45,6 +45,7 @@ pub enum Tag {
     DedupeCommand,
     PruneCommand,
     FuzzilliCommand,
+    SyncCommand,
 }
 
 impl Tag {
@@ -87,6 +88,7 @@ impl Tag {
             Tag::DedupeCommand => b'd',
             Tag::PruneCommand => b'N',
             Tag::FuzzilliCommand => b'F',
+            Tag::SyncCommand => b'S',
         }
     }
 
@@ -172,6 +174,7 @@ impl Tag {
         Self::DedupeCommand,
         Self::PruneCommand,
         Self::FuzzilliCommand,
+        Self::SyncCommand,
     ];
 
     // Heavy methods that pull in `Arguments` / help text live in the CLI crate.

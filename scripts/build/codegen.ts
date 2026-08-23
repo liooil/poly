@@ -458,9 +458,14 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, ["run", script, input, out]) },
     });
     o.all.push(out);
-    // Debug reads the originals at runtime; only release embeds these.
-    if (cfg.debug) o.rustOrderOnly.push(out);
-    else o.rustInputs.push(out);
+    if (cfg.debug) {
+      o.rustOrderOnly.push(out);
+      // Completion fallbacks use include_bytes!, so their source files must
+      // invalidate the debug Rust archive as well as the compressed twin.
+      if (name.startsWith("completions/")) o.rustInputs.push(input);
+    } else {
+      o.rustInputs.push(out);
+    }
   }
 }
 

@@ -35,8 +35,8 @@ end
 set -l poly_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l poly_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l poly_builtin_cmds_without_run add audit build ci completions create dedupe exec help info init install link outdated patch patch-commit pm poly prune publish remove repl test unlink update upgrade why x a c i rm
-set -l poly_builtin_cmds_accepting_flags create help poly upgrade run init link unlink pm x update
+set -l poly_builtin_cmds_without_run add audit build ci completions create dedupe exec help info init install link outdated patch patch-commit pm poly prune publish remove repl sync test unlink update upgrade why x a c i rm
+set -l poly_builtin_cmds_accepting_flags create help poly upgrade run init link unlink pm sync x update
 
 function __poly_complete_bins_scripts --inherit-variable poly_builtin_cmds_without_run -d "Emit poly completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -188,6 +188,7 @@ complete -c poly -n "__fish_use_subcommand" -a "publish" -d "Publish your packag
 complete -c poly -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency from package.json" -f
 complete -c poly -n "__fish_use_subcommand" -a "repl" -d "Start a Poly REPL session" -f
 complete -c poly -n "__fish_use_subcommand" -a "run" -d "Run JavaScript, a package.json script, or a package binary" -f
+complete -c poly -n "__fish_use_subcommand" -a "sync" -d "Install Python dependencies from uv.lock" -f
 complete -c poly -n "__fish_use_subcommand" -a "test" -d "Run unit tests" -f
 complete -c poly -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local npm package" -f
 complete -c poly -n "__fish_use_subcommand" -a "update" -d "Update dependencies and package.json" -f
@@ -245,3 +246,6 @@ complete -c poly -n "__fish_seen_subcommand_from repl" -s "c" -l "config" -r -d 
 complete -c poly -n "__fish_seen_subcommand_from repl" -l "cwd" -r -d "Absolute path to resolve files & entry points from"
 complete -c poly -n "__fish_seen_subcommand_from repl" -l "env-file" -r -d "Load environment variables from the specified file(s)"
 complete -c poly -n "__fish_seen_subcommand_from repl" -l "no-env-file" -d "Disable automatic loading of .env files" -f
+complete -c poly -n "__fish_seen_subcommand_from sync" -l "frozen" -d "Require and consume the existing uv.lock" -f
+complete -c poly -n "__fish_seen_subcommand_from sync" -l "project" -r -F -d "Discover the Python project from this directory"
+complete -c poly -n "__fish_seen_subcommand_from sync" -s "h" -l "help" -d "Display help and exit" -f

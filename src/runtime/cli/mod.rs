@@ -328,6 +328,8 @@ pub(crate) mod fuzzilli_command;
 pub mod install_command;
 #[path = "repl_command.rs"]
 pub mod repl_command;
+#[path = "sync_command.rs"]
+pub mod sync_command;
 #[path = "upgrade_command.rs"]
 pub mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
@@ -647,6 +649,7 @@ pub mod help_command {
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(polyx)<r>
   <b><magenta>repl<r>                           Start a REPL session
   <b><magenta>exec<r>                           Run a shell script directly
+  <b><magenta>sync<r>                           Install Python dependencies from uv.lock
 
   <b><blue>install<r>                        Install dependencies for a package.json <d>(poly i)<r>
   <b><blue>add<r>       <d>{:<16}<r>     Add a dependency to package.json <d>(poly a)<r>
@@ -1002,6 +1005,9 @@ pub mod command {
         if x == RootCommandMatcher::case(b"repl") {
             return Tag::ReplCommand;
         }
+        if x == RootCommandMatcher::case(b"sync") {
+            return Tag::SyncCommand;
+        }
         if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
             for arg in argv.iter() {
                 if arg == b"-g" || arg == b"--global" {
@@ -1337,6 +1343,7 @@ pub mod command {
             Tag::WhyCommand => exec_why(log),
             Tag::BunxCommand => exec_bunx(log),
             Tag::ReplCommand => exec_repl(log),
+            Tag::SyncCommand => exec_sync(),
             Tag::RemoveCommand => exec_remove(log),
             Tag::LinkCommand => exec_link(log),
             Tag::UnlinkCommand => exec_unlink(log),
@@ -1572,6 +1579,12 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
+    fn exec_sync() -> CmdResult {
+        super::sync_command::SyncCommand::exec()
+    }
+
+    #[cold]
+    #[inline(never)]
     fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
@@ -1676,6 +1689,7 @@ pub mod command {
         b"remove",
         b"repl",
         b"run",
+        b"sync",
         b"test",
         b"unlink",
         b"update",
@@ -2199,6 +2213,26 @@ Start an interactive REPL in JavaScript, Python, Shell, SQL, or C mode.
 Inside the REPL, use <cyan>.help<r> to list interactive commands.
 
 Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::SyncCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>poly sync --frozen<r> <cyan>[options]<r>
+
+Install the current project's production Python dependencies from an existing
+uv.lock. Resolution and lockfile updates are not implemented yet.
+
+<b>Options:<r>
+  <cyan>--frozen<r>                 Require and consume the existing uv.lock
+  <cyan>--project <blue>\\<path\\><r>          Discover the Python project from this directory
+  <cyan>-h, --help<r>              Display this menu and exit
+
+<b>Examples:<r>
+  <b><green>poly sync --frozen<r>
+  <b><green>poly sync --frozen<r> <cyan>--project<r> <blue>./examples/app<r>
 "
                 );
                 Output::flush();

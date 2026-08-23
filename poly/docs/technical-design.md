@@ -138,15 +138,22 @@ Poly 的职责：
 CPython wheel 均不能通过外部 Python、构建后端或其他子进程完成；在有
 同进程实现之前应明确拒绝。
 
-`poly_uv` 使用 uv 自己的 `Lock::from_toml` 验证 `uv.lock`，并使用 uv 的
-wheel filename/tag 类型生成 RustPython 安装计划。当前保守边界只接受
-包含通用 Python 3 tag、`none` ABI 与 `any` platform 的 wheel；具体包仍
-必须在物化后通过 RustPython smoke import。
+`poly_uv` 使用 uv 自己的 `Lock::from_toml` 与 lock traversal 验证
+`uv.lock`、选择当前 workspace member 的传递依赖，并求值 Python、平台、
+实现类型 marker 与 resolution fork。当前保守边界只接受包含通用 Python 3
+tag、`none` ABI 与 `any` platform 的 wheel；具体包仍必须在物化后通过
+RustPython smoke import。
 
-物化阶段先按 lock 中的文件名与 SHA-256 校验本地 wheel，再用
-`uv_extract` 同进程解包，并给 `uv_install_wheel` 提供 Poly 自己的
-`Layout`，把 `purelib`/`platlib` 直接指向 `.poly/python`。这条路径不需要
-发现、启动或伪造 CPython virtualenv。
+`poly sync --frozen` 使用 uv 的 HTTP client 在进程内下载 lock 指定的 wheel，
+按 SHA-256 建立项目级持久缓存。物化阶段按 lock 中的文件名与 SHA-256
+校验 wheel，再用 `uv_extract` 同进程解包，并给 `uv_install_wheel` 提供 Poly
+自己的 `Layout`，把 `purelib`/`platlib` 直接指向临时的 `.poly/python`
+环境。只有全部包安装成功才以目录 rename 替换旧环境；下载、校验或 staging
+失败时旧环境保持不变。这条路径不需要发现、启动或伪造 CPython virtualenv。
+
+Python 文件入口、REPL 和 TS→Python module bridge 会从项目祖先中发现
+`.poly/python` 并加入 RustPython 的 `sys.path`。当前命令只消费已有 lock；
+resolver 驱动的 lock 生成以及物化后的 smoke import/兼容性报告仍未实现。
 
 ## 7. Bundle
 

@@ -11,9 +11,11 @@ use uv_workspace::{DiscoveryOptions, Workspace, WorkspaceCache};
 
 mod lock;
 mod stage;
+mod sync;
 
 pub use lock::{InstallPlan, LockedPackage, plan_lock, plan_lock_contents};
 pub use stage::{stage_locked_wheel, stage_wheel_archive};
+pub use sync::{SyncOptions, SyncReport, sync_frozen};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -21,6 +23,10 @@ pub enum Error {
     Executor(#[source] std::io::Error),
     #[error("failed to initialize the embedded uv cache: {0}")]
     Cache(#[source] std::io::Error),
+    #[error("failed to acquire the project sync lock: {0}")]
+    SyncLock(#[source] uv_fs::LockedFileError),
+    #[error("failed to acquire the wheel cache lock: {0}")]
+    CacheLock(#[source] uv_fs::LockedFileError),
     #[error(transparent)]
     Workspace(#[from] uv_workspace::WorkspaceError),
     #[error("failed to read uv lockfile `{path}`: {source}")]
@@ -31,10 +37,21 @@ pub enum Error {
     },
     #[error("uv rejected the lockfile: {0}")]
     InvalidLock(String),
-    #[error("failed to decode the validated uv lockfile: {0}")]
-    LockToml(#[from] toml::de::Error),
-    #[error("uv lockfile package count changed while building the install plan")]
-    LockInvariant,
+    #[error("RustPython {version} does not satisfy the lockfile requirement `{requires_python}`")]
+    PythonVersion {
+        version: String,
+        requires_python: String,
+    },
+    #[error("the current RustPython environment is not supported by this uv lockfile")]
+    UnsupportedEnvironment,
+    #[error("failed to construct the RustPython marker environment: {0}")]
+    MarkerEnvironment(String),
+    #[error("invalid embedded RustPython version `{version}`: {message}")]
+    InvalidPythonVersion { version: String, message: String },
+    #[error("failed to construct wheel compatibility tags: {0}")]
+    PlatformTags(String),
+    #[error("uv could not materialize the selected lockfile dependency graph: {0}")]
+    LockResolution(String),
     #[error("invalid wheel filename `{filename}`: {message}")]
     InvalidWheel { filename: String, message: String },
     #[error(
@@ -51,6 +68,30 @@ pub enum Error {
         version: String,
         filename: String,
     },
+    #[error("locked artifact `{filename}` has an invalid URL: {message}")]
+    ArtifactUrl { filename: String, message: String },
+    #[error("locked artifact `{filename}` uses unsupported URL scheme `{scheme}`")]
+    ArtifactScheme { filename: String, scheme: String },
+    #[error("failed to initialize uv's HTTP client: {0}")]
+    HttpClient(String),
+    #[error("failed to download locked artifact `{filename}`: {message}")]
+    Download { filename: String, message: String },
+    #[error("download for locked artifact `{filename}` returned HTTP {status}")]
+    HttpStatus { filename: String, status: u16 },
+    #[error("failed to persist wheel in cache at `{path}`: {source}")]
+    PersistCache {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "package `{name}=={version}` uses {kind}; Poly sync accepts only hashed generic pure wheels"
+    )]
+    UnsupportedSource {
+        name: String,
+        version: String,
+        kind: String,
+    },
     #[error("failed to access wheel or staging files: {0}")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -66,6 +107,23 @@ pub enum Error {
         filename: String,
         expected: String,
         actual: String,
+    },
+    #[error("refusing to use unsafe sync target `{0}`")]
+    UnsafeTarget(PathBuf),
+    #[error("failed to commit the staged Python environment at `{target}`: {source}")]
+    Commit {
+        target: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(
+        "failed to commit the staged Python environment at `{target}` ({commit}); restoring the previous environment also failed ({rollback}); the previous environment remains at `{backup}`"
+    )]
+    Rollback {
+        target: PathBuf,
+        commit: String,
+        rollback: String,
+        backup: PathBuf,
     },
 }
 
@@ -180,5 +238,18 @@ package = false
             snapshot.members[0].dependencies,
             ["click", "requests", "rich"]
         );
+
+        let plan = plan_lock(&example.join("uv.lock")).expect("plan popular packages lockfile");
+        let package_names = plan
+            .packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for direct_dependency in ["click", "requests", "rich"] {
+            assert!(
+                package_names.contains(direct_dependency),
+                "install plan should contain {direct_dependency}"
+            );
+        }
     }
 }

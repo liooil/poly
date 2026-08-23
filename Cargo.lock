@@ -1836,6 +1836,7 @@ dependencies = [
  "libc",
  "lol_html",
  "poly_python",
+ "poly_uv",
  "rust-argon2",
  "scopeguard",
  "serde_json",
@@ -5488,6 +5489,7 @@ dependencies = [
  "rustpython",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -5495,20 +5497,28 @@ name = "poly_uv"
 version = "0.1.0"
 dependencies = [
  "fs-err",
- "serde",
+ "poly_python",
+ "rustix 0.38.44",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "toml",
  "uv-cache",
+ "uv-client",
+ "uv-configuration",
  "uv-distribution-filename",
+ "uv-distribution-types",
  "uv-extract",
+ "uv-fs",
  "uv-install-wheel",
+ "uv-normalize",
+ "uv-pep440",
+ "uv-pep508",
  "uv-platform-tags",
  "uv-preview",
  "uv-pypi-types",
  "uv-resolver",
  "uv-workspace",
+ "windows-version",
  "zip",
 ]
 

@@ -347,7 +347,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files Rust `include!`s / `include_bytes!`s — content tracked.
+   * Files Rust `include!`s / `include_bytes!`s — content tracked.
    * The `.rs` files (`generated_classes.rs` etc.) are undeclared side
    * effects of the same scripts that produce `CodegenOutputs.rustInputs`, so
    * passing that set here is sufficient to order codegen before cargo.

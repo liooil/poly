@@ -1,5 +1,28 @@
 # 验证记录
 
+## 2026-08-23：frozen Python sync
+
+- `cargo test --locked -p poly_uv`
+  - uv 负责解析 lock、求值 marker 与遍历传递依赖；
+  - 本地 HTTP 与 `file:` wheel 下载全程不访问公共网络；
+  - SHA-256 校验、损坏缓存替换、失败时保留旧环境；
+  - 安装后的包可由 RustPython 文件入口导入。
+- `cargo clippy --locked -p poly_uv --all-targets -- -D warnings`
+- `cargo test --locked -p poly_python`
+  - 文件入口与持久 module bridge 可发现 `.poly/python`；
+  - 第三方包路径位于标准库之后。
+- `cargo clippy --locked -p poly_python --all-targets -- -D warnings`
+- `cargo test --locked -p bun_options_types`
+- `cargo check --locked -p bun_runtime --tests`
+- `bun bd test test/cli/bun.test.ts`
+  - 54 项通过，2 项既有 `todo`，0 项失败；
+  - 覆盖 `sync` CLI 边界以及 Bash、Fish、Zsh 的公共命令补全。
+- `bun run rust:check-all`
+  - 本机 `x86_64-unknown-linux-gnu` 通过；
+  - 其余 11 个目标在本机缺少对应 C/C++ cross toolchain、平台 headers 或 SDK，
+    尚未形成有效的目标平台检查结果。
+---
+
 验证日期：2026-07-31
 
 ## 已通过

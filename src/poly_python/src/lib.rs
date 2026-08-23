@@ -42,7 +42,7 @@
 /// 64-bit-safe int/float, UTF-8 string, list, and string-keyed dict.  Values
 /// outside this domain (bytes, BigInt, NaN/Infinity, undefined, cyclic
 /// structures, custom objects) are rejected with a typed error.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -530,6 +530,7 @@ pub fn clear_host_callback() {
 struct PythonRuntime {
     interpreter: Interpreter,
     registry: Mutex<ModuleRegistry>,
+    import_paths: Mutex<HashSet<PathBuf>>,
     /// Persistent REPL scope: variables assigned in `poly repl` (py mode)
     /// survive across inputs. Created on first `repl_eval`.
     repl_scope: parking_lot::Mutex<Option<Scope>>,
@@ -551,6 +552,9 @@ impl PythonRuntime {
         settings.argv = vec!["<poly-python>".to_owned()];
         settings.write_bytecode = false;
         settings.install_signal_handlers = false;
+        let initial_import_path = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| synced_python_path(&cwd));
 
         let interpreter = InterpreterBuilder::new()
             .settings(settings)
@@ -576,6 +580,9 @@ impl PythonRuntime {
                 "<poly-js-package>".to_owned(),
             )
             .expect("js package bootstrap failed");
+            if let Some(path) = &initial_import_path {
+                append_sys_path(vm, path).expect("failed to activate synced Python environment");
+            }
             scope
         });
 
@@ -583,6 +590,7 @@ impl PythonRuntime {
         Self {
             interpreter,
             registry: Mutex::new(ModuleRegistry::new()),
+            import_paths: Mutex::new(initial_import_path.into_iter().collect()),
             repl_scope: parking_lot::Mutex::new(Some(repl_scope)),
         }
     }
@@ -741,6 +749,7 @@ impl PythonRuntime {
             .chain(request.script_args.iter().cloned())
             .collect();
         settings.path_list.push(parent);
+        let site_packages = synced_python_path(&path);
         settings.write_bytecode = false;
         settings.install_signal_handlers = false;
 
@@ -762,6 +771,9 @@ impl PythonRuntime {
                 JS_PACKAGE_SOURCE,
                 "<poly-js-package>".to_owned(),
             )?;
+            if let Some(path) = &site_packages {
+                append_sys_path(vm, path)?;
+            }
             // Make `__file__` available so `js.import_module()` can resolve
             // relative specifiers against the script's directory.
             scope
@@ -1351,6 +1363,7 @@ impl PythonRuntime {
         path: &Path,
         _original_specifier: &str,
     ) -> Result<(Scope, bool), PythonError> {
+        self.ensure_project_import_path(path)?;
         let mut registry = self.registry.lock().unwrap();
 
         if let Some(state) = registry.modules.get(path) {
@@ -1394,6 +1407,27 @@ impl PythonRuntime {
 
         trace(&format!("loaded module {}", path.display()));
         Ok((scope, true))
+    }
+
+    fn ensure_project_import_path(&self, path: &Path) -> Result<(), PythonError> {
+        let Some(site_packages) = synced_python_path(path) else {
+            return Ok(());
+        };
+        let mut import_paths = self.import_paths.lock().unwrap();
+        if import_paths.contains(&site_packages) {
+            return Ok(());
+        }
+        self.interpreter.enter(|vm| {
+            append_sys_path(vm, &site_packages).map_err(|error| {
+                PythonError::new(format!(
+                    "failed to activate {}: {}",
+                    site_packages.display(),
+                    render_exception(vm, &error)
+                ))
+            })
+        })?;
+        import_paths.insert(site_packages);
+        Ok(())
     }
 
     /// Extract module exports according to the v1 rules.
@@ -1701,6 +1735,57 @@ fn render_exception(vm: &VirtualMachine, exception: &PyBaseExceptionRef) -> Stri
 // Public API
 // ---------------------------------------------------------------------------
 
+/// The Python language version implemented by the embedded RustPython VM.
+pub const PYTHON_VERSION: (u8, u8, u8) = (
+    rustpython::vm::version::MAJOR as u8,
+    rustpython::vm::version::MINOR as u8,
+    rustpython::vm::version::MICRO as u8,
+);
+
+/// The embedded interpreter version in normalized PEP 440 form.
+pub fn python_full_version() -> String {
+    use rustpython::vm::version;
+
+    let release = match version::RELEASELEVEL {
+        "final" => String::new(),
+        "alpha" => format!("a{}", version::SERIAL),
+        "beta" => format!("b{}", version::SERIAL),
+        "candidate" => format!("rc{}", version::SERIAL),
+        other => format!("{other}{}", version::SERIAL),
+    };
+    format!(
+        "{}.{}.{}{}",
+        version::MAJOR,
+        version::MINOR,
+        version::MICRO,
+        release
+    )
+}
+
+fn append_sys_path(vm: &VirtualMachine, path: &Path) -> rustpython::vm::PyResult<()> {
+    let sys_path = vm.sys_module.get_attr("path", vm)?;
+    vm.call_method(
+        &sys_path,
+        "append",
+        (vm.new_pyobj(path.to_string_lossy().into_owned()),),
+    )?;
+    Ok(())
+}
+
+fn synced_python_path(start: &Path) -> Option<PathBuf> {
+    let start = if start.is_dir() {
+        start
+    } else {
+        start.parent()?
+    };
+    start.ancestors().find_map(|directory| {
+        let candidate = directory.join(".poly/python");
+        candidate
+            .is_dir()
+            .then(|| fs::canonicalize(&candidate).unwrap_or(candidate))
+    })
+}
+
 /// Handle a bridge request (JSON in, JSON out).
 pub fn handle_bridge_request(request_json: &str) -> Result<String, PythonError> {
     trace("handling bridge request");
@@ -1931,6 +2016,69 @@ mod tests {
             let resp2 = RUNTIME.with(|r| r.handle_request(req2)).unwrap();
             assert!(resp2.ok, "second call should succeed: {:?}", resp2.error);
         })
+    }
+
+    #[test]
+    fn standalone_file_imports_synced_project_package() {
+        run_with_big_stack(|| {
+            let directory = tempfile::tempdir().expect("create synced project");
+            let package = directory.path().join(".poly/python/demo_dep");
+            fs::create_dir_all(&package).expect("create synced package");
+            fs::write(package.join("__init__.py"), "VALUE = 42\n").expect("write synced package");
+            fs::write(
+                package
+                    .parent()
+                    .expect("site-packages directory")
+                    .join("fractions.py"),
+                "raise RuntimeError('synced packages must not shadow the standard library')\n",
+            )
+            .expect("write shadow package");
+            let script = directory.path().join("main.py");
+            fs::write(
+                &script,
+                "import demo_dep\nfrom fractions import Fraction\nassert demo_dep.VALUE == 42\nassert Fraction(1, 2).numerator == 1\n",
+            )
+            .expect("write Python entrypoint");
+
+            assert_eq!(run_file(&script, &[]).expect("run synced entrypoint"), 0);
+        });
+    }
+
+    #[test]
+    fn persistent_module_imports_synced_project_package() {
+        run_with_big_stack(|| {
+            let directory = tempfile::tempdir().expect("create synced project");
+            let package = directory.path().join(".poly/python/demo_dep");
+            fs::create_dir_all(&package).expect("create synced package");
+            fs::write(package.join("__init__.py"), "VALUE = 42\n").expect("write synced package");
+            fs::write(
+                package
+                    .parent()
+                    .expect("site-packages directory")
+                    .join("fractions.py"),
+                "raise RuntimeError('synced packages must not shadow the standard library')\n",
+            )
+            .expect("write shadow package");
+            let module = directory.path().join("bridge_module.py");
+            fs::write(
+                &module,
+                "import demo_dep\nfrom fractions import Fraction\nVALUE = demo_dep.VALUE + Fraction(0, 1).numerator\n",
+            )
+            .expect("write bridge module");
+
+            let response = describe_module(&module.to_string_lossy())
+                .expect("describe module using synced dependency");
+            let decoded: BridgeResponse =
+                serde_json::from_str(&response).expect("decode bridge response");
+            assert_eq!(
+                decoded
+                    .exports
+                    .expect("module exports")
+                    .constants
+                    .get("VALUE"),
+                Some(&Value::from(42))
+            );
+        });
     }
 
     #[test]

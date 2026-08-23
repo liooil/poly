@@ -21,6 +21,30 @@ pub fn stage_locked_wheel(
     sys_executable: &Path,
     python_version: (u8, u8),
 ) -> Result<PathBuf, Error> {
+    let actual_hash = wheel_sha256(archive)?;
+    if !actual_hash.eq_ignore_ascii_case(&package.sha256) {
+        return Err(Error::HashMismatch {
+            filename: package.filename.clone(),
+            expected: package.sha256.clone(),
+            actual: actual_hash,
+        });
+    }
+    stage_verified_locked_wheel(
+        package,
+        archive,
+        site_packages,
+        sys_executable,
+        python_version,
+    )
+}
+
+pub(crate) fn stage_verified_locked_wheel(
+    package: &LockedPackage,
+    archive: &Path,
+    site_packages: &Path,
+    sys_executable: &Path,
+    python_version: (u8, u8),
+) -> Result<PathBuf, Error> {
     let actual_filename = archive
         .file_name()
         .and_then(|name| name.to_str())
@@ -32,15 +56,6 @@ pub fn stage_locked_wheel(
         return Err(Error::WheelFilenameMismatch {
             expected: package.filename.clone(),
             actual: actual_filename.to_owned(),
-        });
-    }
-
-    let actual_hash = wheel_sha256(archive)?;
-    if !actual_hash.eq_ignore_ascii_case(&package.sha256) {
-        return Err(Error::HashMismatch {
-            filename: package.filename.clone(),
-            expected: package.sha256.clone(),
-            actual: actual_hash,
         });
     }
 
@@ -72,7 +87,6 @@ pub fn stage_wheel_archive(
         return Err(Error::IncompatibleWheel(filename.to_string()));
     }
 
-    let staging_root = site_packages.parent().unwrap_or(site_packages);
     let layout = Layout {
         sys_executable: sys_executable.to_path_buf(),
         python_version,
@@ -80,9 +94,9 @@ pub fn stage_wheel_archive(
         scheme: Scheme {
             purelib: site_packages.to_path_buf(),
             platlib: site_packages.to_path_buf(),
-            scripts: staging_root.join("bin"),
-            data: staging_root.join("data"),
-            include: staging_root.join("include"),
+            scripts: site_packages.join(".bin"),
+            data: site_packages.join(".data"),
+            include: site_packages.join(".include"),
         },
     };
     fs::create_dir_all(site_packages)?;
@@ -107,20 +121,22 @@ pub fn stage_wheel_archive(
     Ok(dist_info)
 }
 
-fn wheel_sha256(path: &Path) -> Result<String, Error> {
+pub(crate) fn wheel_sha256(path: &Path) -> Result<String, Error> {
     let executor = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(Error::Executor)?;
-    executor.block_on(async {
-        let file = tokio::fs::File::open(path).await?;
-        let mut hashers = [Hasher::from(HashAlgorithm::Sha256)];
-        {
-            let mut reader = HashReader::new(file, &mut hashers);
-            reader.finish().await?;
-        }
-        let [hasher] = hashers;
-        Ok(HashDigest::from(hasher).digest.to_string())
-    })
+    executor.block_on(wheel_sha256_async(path))
+}
+
+pub(crate) async fn wheel_sha256_async(path: &Path) -> Result<String, Error> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut hashers = [Hasher::from(HashAlgorithm::Sha256)];
+    {
+        let mut reader = HashReader::new(file, &mut hashers);
+        reader.finish().await?;
+    }
+    let [hasher] = hashers;
+    Ok(HashDigest::from(hasher).digest.to_string())
 }
 
 #[cfg(test)]

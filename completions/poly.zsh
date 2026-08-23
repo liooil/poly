@@ -564,6 +564,16 @@ _poly_upgrade_completion() {
 
 }
 
+_poly_sync_completion() {
+    _arguments -s -C \
+        '--frozen[Require and consume the existing uv.lock]' \
+        '--project[Discover the Python project from this directory]:project directory:_directories' \
+        '-h[Display help and exit]' \
+        '--help[Display help and exit]' &&
+        ret=0
+
+}
+
 _poly_repl_completion() {
     _arguments -s -C \
         '1: :->cmd' \
@@ -943,6 +953,7 @@ _poly() {
             'remove\:"Remove a dependency from package.json" '
             'repl\:"Start a Poly REPL session" '
             'run\:"Run JavaScript, a package.json script, or a package binary" '
+            'sync\:"Install Python dependencies from uv.lock" '
             'test\:"Run unit tests" '
             'unlink\:"Unregister a local npm package" '
             'update\:"Update dependencies and package.json" '
@@ -1013,6 +1024,10 @@ _poly() {
             ;;
         repl)
             _poly_repl_completion
+
+            ;;
+        sync)
+            _poly_sync_completion
 
             ;;
         build)
@@ -1116,6 +1131,10 @@ _poly() {
                     ;;
                 repl)
                     _poly_repl_completion
+
+                    ;;
+                sync)
+                    _poly_sync_completion
 
                     ;;
                 build)
