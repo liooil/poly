@@ -20,7 +20,7 @@
 ## M1：可开发的双语言项目
 
 - [ ] `poly init`
-- [ ] `poly.toml` 默认入口
+- [ ] 无需 `poly.toml` 的项目发现与入口分派
 - [ ] Python module cache 与 reload 语义
 - [ ] 协议版本握手
 - [ ] bytes、BigInt 与 non-finite number 标签
@@ -30,8 +30,12 @@
 
 ## M2：uv 与依赖兼容性
 
+- [x] 固定 uv revision 并建立无子进程的 `poly_uv` 适配层
+- [x] `pyproject.toml` 项目发现与 `uv.lock` 校验
+- [x] 纯 wheel 选择、lock 哈希校验与 staging
 - [ ] `poly sync`
-- [ ] uv lock 与 staging
+- [ ] uv resolver lock 生成
+- [ ] 同进程 wheel 下载与缓存
 - [ ] wheel / sdist 检查
 - [ ] 原生扩展拒绝策略
 - [ ] RustPython smoke imports

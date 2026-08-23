@@ -1,0 +1,33 @@
+[package]
+name = "poly_uv"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "In-process uv integration for Poly"
+
+[dependencies]
+fs-err = "=3.3.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+tempfile = "=3.27.0"
+thiserror = "=2.0.20"
+tokio = { version = "=1.53.1", features = ["fs", "rt"] }
+toml = "=1.1.4"
+uv-cache = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-distribution-filename = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-extract = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-install-wheel = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-platform-tags = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-preview = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-pypi-types = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-resolver = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-workspace = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+
+[dev-dependencies]
+zip = { version = "=8.6.0", default-features = false }
+
+[lints.clippy]
+# uv's project model is intentionally isolated from Bun's allocator/IO stack.
+disallowed_methods = "allow"
+disallowed_types = "allow"
+disallowed_macros = "allow"
