@@ -1,5 +1,26 @@
 # 验证记录
 
+## 2026-08-23：resolver-driven Python sync
+
+- `cargo fmt --all --check`
+- `cargo test --locked -p poly_uv`
+  - 23 项通过，0 项失败；
+  - 本地 registry 覆盖最高兼容版本选择、标准 `uv.lock` 生成与 frozen 复用；
+  - 带 Basic Auth 的私有 index 覆盖解析与 wheel 下载，锁文件不包含密码；
+  - CPython 专用 wheel、平台 wheel 与 source-only 解析不会进入安装环境；
+  - 解析失败时原有 `uv.lock` 保持不变。
+- `cargo clippy --locked -p poly_uv --all-targets -- -D warnings`
+- `cargo test --locked -p poly_python`
+  - 17 项单元测试与 1 项 interop 测试通过。
+- `cargo check --locked -p bun_runtime --tests`
+- `USE_SYSTEM_BUN=1 bun test test/cli/bun.test.ts -t "resolves an empty project and writes uv.lock"`
+  - 系统 Bun 按预期失败，证明 CLI 回归测试依赖本分支实现。
+- `bun bd test test/cli/bun.test.ts`
+  - 54 项通过，2 项既有 `todo`，0 项失败。
+- `bun run rust:check-all`
+  - 本机 `x86_64-unknown-linux-gnu` 通过；
+  - 其余 11 个目标缺少对应 cross compiler、平台 SDK 或归档工具，未形成有效检查结果。
+
 ## 2026-08-23：frozen Python sync
 
 - `cargo test --locked -p poly_uv`

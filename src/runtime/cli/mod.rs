@@ -2220,10 +2220,10 @@ Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
             Tag::SyncCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>poly sync --frozen<r> <cyan>[options]<r>
+<b>Usage<r>: <b><green>poly sync<r> <cyan>[options]<r>
 
-Install the current project's production Python dependencies from an existing
-uv.lock. Resolution and lockfile updates are not implemented yet.
+Resolve the current project's Python dependencies, update uv.lock, and install
+the production dependency graph into .poly/python.
 
 <b>Options:<r>
   <cyan>--frozen<r>                 Require and consume the existing uv.lock
@@ -2231,8 +2231,9 @@ uv.lock. Resolution and lockfile updates are not implemented yet.
   <cyan>-h, --help<r>              Display this menu and exit
 
 <b>Examples:<r>
+  <b><green>poly sync<r>
   <b><green>poly sync --frozen<r>
-  <b><green>poly sync --frozen<r> <cyan>--project<r> <blue>./examples/app<r>
+  <b><green>poly sync<r> <cyan>--project<r> <blue>./examples/app<r>
 "
                 );
                 Output::flush();

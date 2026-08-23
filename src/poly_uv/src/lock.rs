@@ -345,7 +345,7 @@ fn source_description(source: &SourceDist) -> &'static str {
     }
 }
 
-fn marker_environment(
+pub(crate) fn marker_environment(
     python_version: (u8, u8, u8),
     python_full_version: &str,
 ) -> Result<ResolverMarkerEnvironment, Error> {
@@ -456,7 +456,7 @@ fn windows_release(major: u32, minor: u32, build: u32, server: bool) -> String {
         .unwrap_or_else(|| format!("{major}.{minor}"))
 }
 
-fn current_tag_platform() -> Result<Platform, Error> {
+pub(crate) fn current_tag_platform() -> Result<Platform, Error> {
     let arch = if cfg!(target_arch = "aarch64") {
         Arch::Aarch64
     } else if cfg!(target_arch = "x86_64") {

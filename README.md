@@ -59,13 +59,13 @@ The common project lifecycle should use one CLI:
 poly run app.ts        # run a TypeScript entry point
 poly run tool.py       # run a Python entry point
 poly repl python       # start directly in Python REPL mode
-poly sync --frozen     # install Python dependencies from an existing uv.lock
+poly sync              # resolve, lock, and install Python dependencies
+poly sync --frozen     # install strictly from an existing uv.lock
 poly build app.ts      # produce a standalone application
 ```
 
-`poly run` entry-point routing, the multi-language REPL, and frozen Python
-dependency materialization are part of the current prototype. `poly sync`
-without `--frozen` still awaits resolver-driven lock generation, and
+`poly run` entry-point routing, the multi-language REPL, and in-process Python
+dependency resolution and materialization are part of the current prototype.
 `poly build` is not implemented yet.
 
 REPL history is shared across languages. Recalling an entry from another mode
@@ -146,7 +146,7 @@ tagged values, and explicit lifetime semantics.
 | Static cross-language imports and callable proxies | Planned |
 | Cooperative async execution | Planned |
 | `poly sync --frozen` for generic pure wheels | Implemented |
-| uv resolver lock generation | Planned |
+| `poly sync` resolver-driven lock generation | Implemented |
 | `poly build` standalone applications | Planned |
 
 See the [validation record](poly/docs/validation.md) for the exact verified

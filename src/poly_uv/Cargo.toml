@@ -13,13 +13,17 @@ rustix = { workspace = true, features = ["system"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.20"
 tokio = { version = "=1.53.1", features = ["fs", "io-util", "net", "rt", "time"] }
+uv-auth = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-cache = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-client = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-configuration = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-distribution = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-distribution-filename = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-distribution-types = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-errors = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-extract = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-fs = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700", features = ["tokio"] }
+uv-git = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-install-wheel = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-normalize = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-pep440 = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
@@ -27,7 +31,10 @@ uv-pep508 = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a
 uv-platform-tags = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-preview = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-pypi-types = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-python = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-requirements = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-resolver = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
+uv-types = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 uv-workspace = { git = "https://github.com/astral-sh/uv.git", rev = "210d1f6785e95a8c8c0d53e284408c9be1134700" }
 
 [target.'cfg(windows)'.dependencies]

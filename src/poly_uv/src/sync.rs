@@ -3,16 +3,17 @@ use std::path::{Component, Path, PathBuf};
 
 use tempfile::TempPath;
 use tokio::io::AsyncWriteExt;
-use uv_client::{BaseClient, BaseClientBuilder};
+use uv_client::BaseClient;
 use uv_fs::{LockedFile, LockedFileMode};
 use uv_pep508::VerbatimUrl;
 use uv_workspace::{DiscoveryOptions, MemberDiscovery, VirtualProject, WorkspaceCache};
 
 use crate::lock::plan_lock_contents_for_project;
+use crate::resolve::{client_builder_for_indexes, project_indexes, resolve_project_lock};
 use crate::stage::{stage_verified_locked_wheel, wheel_sha256_async};
 use crate::{Error, InstallPlan, LockedPackage};
 
-/// Configuration for materializing an existing uv lockfile.
+/// Configuration for resolving or materializing a uv project.
 #[derive(Debug, Clone)]
 pub struct SyncOptions {
     /// Directory from which uv project and workspace discovery starts.
@@ -36,7 +37,7 @@ impl SyncOptions {
     }
 }
 
-/// Result of a successful frozen sync.
+/// Result of a successful sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncReport {
     /// Discovered uv workspace root.
@@ -53,11 +54,15 @@ pub struct SyncReport {
     pub warnings: Vec<String>,
 }
 
-struct PreparedSync {
-    project_root: PathBuf,
-    cache_dir: PathBuf,
-    target_dir: PathBuf,
-    plan: InstallPlan,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncMode {
+    Resolve,
+    Frozen,
+}
+
+/// Resolve the current project, update `uv.lock`, and materialize its environment.
+pub fn sync(options: &SyncOptions) -> Result<SyncReport, Error> {
+    sync_with_mode(options, SyncMode::Resolve)
 }
 
 /// Materialize the current project's existing `uv.lock` without resolving it.
@@ -66,10 +71,25 @@ struct PreparedSync {
 /// against the lock before installation, and the previous `.poly/python`
 /// directory is replaced only after the complete staging directory succeeds.
 pub fn sync_frozen(options: &SyncOptions) -> Result<SyncReport, Error> {
+    sync_with_mode(options, SyncMode::Frozen)
+}
+
+fn sync_with_mode(options: &SyncOptions, mode: SyncMode) -> Result<SyncReport, Error> {
     let project_dir = fs::canonicalize(&options.project_dir)?;
     let executor = runtime()?;
-    let prepared = executor.block_on(prepare_sync(&project_dir, options))?;
-    let lock_dir = prepared.project_root.join(".poly");
+    let project = executor.block_on(discover_project(&project_dir))?;
+    let project_root = project.workspace().install_path().clone();
+    let cache_dir = resolve_from_root(
+        &project_root,
+        options.cache_dir.as_deref(),
+        Path::new(".poly/cache/wheels"),
+    );
+    let target_dir = resolve_from_root(
+        &project_root,
+        options.target_dir.as_deref(),
+        Path::new(".poly/python"),
+    );
+    let lock_dir = project_root.join(".poly");
     fs::create_dir_all(&lock_dir)?;
     let _sync_lock = executor
         .block_on(LockedFile::acquire(
@@ -79,14 +99,32 @@ pub fn sync_frozen(options: &SyncOptions) -> Result<SyncReport, Error> {
         ))
         .map_err(Error::SyncLock)?;
 
-    fs::create_dir_all(&prepared.cache_dir)?;
-    let cache_dir = fs::canonicalize(&prepared.cache_dir)?;
+    fs::create_dir_all(&cache_dir)?;
+    let cache_dir = fs::canonicalize(&cache_dir)?;
     let lock_dir = fs::canonicalize(&lock_dir)?;
+    let resolver_cache_dir = canonicalize_destination(&project_root.join(".poly/cache/uv"))?;
     let target_dir = validate_target(
-        &prepared.project_root,
-        &prepared.target_dir,
-        &[&lock_dir, &cache_dir],
+        &project_root,
+        &target_dir,
+        &[&lock_dir, &cache_dir, &resolver_cache_dir],
     )?;
+
+    let lock_path = project_root.join("uv.lock");
+    let contents = if mode == SyncMode::Frozen {
+        executor
+            .block_on(tokio::fs::read_to_string(&lock_path))
+            .map_err(|source| Error::ReadLock {
+                path: lock_path.clone(),
+                source,
+            })?
+    } else {
+        executor.block_on(resolve_project_lock(&project, &resolver_cache_dir))?
+    };
+    let plan = plan_lock_contents_for_project(&contents, &project_root, project.project_name())?;
+    if mode == SyncMode::Resolve {
+        executor.block_on(uv_fs::write_atomic(&lock_path, &contents))?;
+    }
+
     let _cache_lock = executor
         .block_on(LockedFile::acquire(
             cache_dir.join(".lock"),
@@ -95,10 +133,10 @@ pub fn sync_frozen(options: &SyncOptions) -> Result<SyncReport, Error> {
         ))
         .map_err(Error::CacheLock)?;
 
-    let mut archives = Vec::with_capacity(prepared.plan.packages.len());
+    let mut archives = Vec::with_capacity(plan.packages.len());
     let mut missing = Vec::new();
     let mut cache_hits = 0;
-    for package in &prepared.plan.packages {
+    for package in &plan.packages {
         let archive = cached_wheel_path(&cache_dir, package);
         if archive.is_file()
             && executor
@@ -114,7 +152,10 @@ pub fn sync_frozen(options: &SyncOptions) -> Result<SyncReport, Error> {
 
     let downloaded = missing.len();
     if !missing.is_empty() {
-        let downloads = executor.block_on(download_missing(&missing))?;
+        let client = client_builder_for_indexes(&project_indexes(project.workspace()))?
+            .build()
+            .map_err(|error| Error::HttpClient(error.to_string()))?;
+        let downloads = executor.block_on(download_missing(&client, &missing))?;
         for ((package, destination), temporary) in missing.into_iter().zip(downloads) {
             let actual = executor.block_on(wheel_sha256_async(&temporary))?;
             if !actual.eq_ignore_ascii_case(&package.sha256) {
@@ -135,17 +176,16 @@ pub fn sync_frozen(options: &SyncOptions) -> Result<SyncReport, Error> {
     drop(executor);
 
     let warnings = stage_and_commit(
-        &prepared.plan,
+        &plan,
         &archives,
         &target_dir,
         &options.sys_executable,
         (poly_python::PYTHON_VERSION.0, poly_python::PYTHON_VERSION.1),
     )?;
     Ok(SyncReport {
-        project_root: prepared.project_root,
+        project_root,
         target: target_dir,
-        packages: prepared
-            .plan
+        packages: plan
             .packages
             .iter()
             .map(|package| format!("{}=={}", package.name, package.version))
@@ -163,10 +203,10 @@ fn runtime() -> Result<tokio::runtime::Runtime, Error> {
         .map_err(Error::Executor)
 }
 
-async fn prepare_sync(project_dir: &Path, options: &SyncOptions) -> Result<PreparedSync, Error> {
+async fn discover_project(project_dir: &Path) -> Result<VirtualProject, Error> {
     let discovery_cache = uv_cache::Cache::temp().map_err(Error::Cache)?;
     let workspace_cache = WorkspaceCache::default();
-    let project = VirtualProject::discover(
+    VirtualProject::discover(
         project_dir,
         &DiscoveryOptions {
             members: MemberDiscovery::Existing,
@@ -175,32 +215,8 @@ async fn prepare_sync(project_dir: &Path, options: &SyncOptions) -> Result<Prepa
         &discovery_cache,
         &workspace_cache,
     )
-    .await?;
-    let project_root = project.workspace().install_path().clone();
-    let lock_path = project_root.join("uv.lock");
-    let contents = tokio::fs::read_to_string(&lock_path)
-        .await
-        .map_err(|source| Error::ReadLock {
-            path: lock_path,
-            source,
-        })?;
-    let plan = plan_lock_contents_for_project(&contents, &project_root, project.project_name())?;
-    let cache_dir = resolve_from_root(
-        &project_root,
-        options.cache_dir.as_deref(),
-        Path::new(".poly/cache/wheels"),
-    );
-    let target_dir = resolve_from_root(
-        &project_root,
-        options.target_dir.as_deref(),
-        Path::new(".poly/python"),
-    );
-    Ok(PreparedSync {
-        project_root,
-        cache_dir,
-        target_dir,
-        plan,
-    })
+    .await
+    .map_err(Error::Workspace)
 }
 
 fn resolve_from_root(root: &Path, configured: Option<&Path>, default: &Path) -> PathBuf {
@@ -227,14 +243,7 @@ fn validate_target(
     {
         return Err(Error::UnsafeTarget(target));
     }
-    let filename = target
-        .file_name()
-        .ok_or_else(|| Error::UnsafeTarget(target.clone()))?;
-    let parent = target
-        .parent()
-        .ok_or_else(|| Error::UnsafeTarget(target.clone()))?;
-    fs::create_dir_all(parent)?;
-    let target = fs::canonicalize(parent)?.join(filename);
+    let target = canonicalize_destination(&target)?;
     if target == project_root
         || project_root.starts_with(&target)
         || protected_paths
@@ -244,6 +253,17 @@ fn validate_target(
         return Err(Error::UnsafeTarget(target));
     }
     Ok(target)
+}
+
+fn canonicalize_destination(path: &Path) -> Result<PathBuf, Error> {
+    let filename = path
+        .file_name()
+        .ok_or_else(|| Error::UnsafeTarget(path.to_path_buf()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::UnsafeTarget(path.to_path_buf()))?;
+    fs::create_dir_all(parent)?;
+    Ok(fs::canonicalize(parent)?.join(filename))
 }
 
 fn normalize_absolute(path: &Path) -> Option<PathBuf> {
@@ -272,15 +292,15 @@ fn cached_wheel_path(cache_dir: &Path, package: &LockedPackage) -> PathBuf {
         .join(&package.filename)
 }
 
-async fn download_missing(missing: &[(&LockedPackage, PathBuf)]) -> Result<Vec<TempPath>, Error> {
-    let client = BaseClientBuilder::default()
-        .build()
-        .map_err(|error| Error::HttpClient(error.to_string()))?;
+async fn download_missing(
+    client: &BaseClient,
+    missing: &[(&LockedPackage, PathBuf)],
+) -> Result<Vec<TempPath>, Error> {
     let mut downloads = Vec::with_capacity(missing.len());
     for (package, destination) in missing {
         let parent = destination.parent().expect("cached wheel has a parent");
         fs::create_dir_all(parent)?;
-        downloads.push(download_one(&client, package, parent).await?);
+        downloads.push(download_one(client, package, parent).await?);
     }
     Ok(downloads)
 }
@@ -416,8 +436,9 @@ fn stage_and_commit(
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::thread;
+    use std::time::Duration;
 
     use uv_pep508::VerbatimUrl;
     use zip::ZipWriter;
@@ -427,31 +448,196 @@ mod tests {
     use crate::stage::wheel_sha256;
 
     fn wheel_bytes() -> Vec<u8> {
+        wheel_bytes_for("1.0.0", 42)
+    }
+
+    fn wheel_bytes_for(version: &str, value: u8) -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
         for (path, contents) in [
-            ("demo_pkg/__init__.py", "VALUE = 42\n"),
             (
-                "demo_pkg-1.0.0.dist-info/WHEEL",
-                "Wheel-Version: 1.0\nGenerator: poly-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                "demo_pkg/__init__.py".to_owned(),
+                format!("VALUE = {value}\n"),
             ),
             (
-                "demo_pkg-1.0.0.dist-info/METADATA",
-                "Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.0.0\n",
+                format!("demo_pkg-{version}.dist-info/WHEEL"),
+                "Wheel-Version: 1.0\nGenerator: poly-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n".to_owned(),
             ),
             (
-                "demo_pkg-1.0.0.dist-info/RECORD",
-                "demo_pkg/__init__.py,,\ndemo_pkg-1.0.0.dist-info/WHEEL,,\ndemo_pkg-1.0.0.dist-info/METADATA,,\ndemo_pkg-1.0.0.dist-info/RECORD,,\n",
+                format!("demo_pkg-{version}.dist-info/METADATA"),
+                format!("Metadata-Version: 2.1\nName: demo-pkg\nVersion: {version}\n"),
+            ),
+            (
+                format!("demo_pkg-{version}.dist-info/RECORD"),
+                format!(
+                    "demo_pkg/__init__.py,,\ndemo_pkg-{version}.dist-info/WHEEL,,\ndemo_pkg-{version}.dist-info/METADATA,,\ndemo_pkg-{version}.dist-info/RECORD,,\n"
+                ),
             ),
         ] {
-            writer
-                .start_file(path, options)
-                .expect("start wheel member");
+            writer.start_file(path, options).expect("start wheel member");
             writer
                 .write_all(contents.as_bytes())
                 .expect("write wheel member");
         }
         writer.finish().expect("finish wheel archive").into_inner()
+    }
+
+    struct LocalRegistry {
+        address: std::net::SocketAddr,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl LocalRegistry {
+        fn start(files: Vec<(String, Vec<u8>, String)>) -> Self {
+            Self::start_with_auth(files, None)
+        }
+
+        fn start_authenticated(files: Vec<(String, Vec<u8>, String)>) -> Self {
+            Self::start_with_auth(files, Some("Basic cG9seTpzZWNyZXQ=".to_owned()))
+        }
+
+        fn start_with_auth(
+            files: Vec<(String, Vec<u8>, String)>,
+            expected_authorization: Option<String>,
+        ) -> Self {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local registry");
+            let address = listener.local_addr().expect("local registry address");
+            let simple = files
+                .iter()
+                .map(|(filename, _, hash)| {
+                    format!(
+                        "<a href=\"/files/{filename}#sha256={hash}\" data-core-metadata=\"true\">{filename}</a>"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let thread = thread::spawn(move || {
+                for incoming in listener.incoming() {
+                    let mut stream = incoming.expect("accept registry request");
+                    let (path, authorization) = read_request(&mut stream);
+                    if path == "/shutdown" {
+                        break;
+                    }
+                    let (status, content_type, body): (&str, &str, Vec<u8>) =
+                        if expected_authorization
+                            .as_ref()
+                            .is_some_and(|expected| authorization.as_ref() != Some(expected))
+                        {
+                            ("401 Unauthorized", "text/plain", b"unauthorized".to_vec())
+                        } else if path.trim_end_matches('/') == "/simple/demo-pkg" {
+                            (
+                                "200 OK",
+                                "application/vnd.pypi.simple.v1+html",
+                                simple.as_bytes().to_vec(),
+                            )
+                        } else if let Some(filename) = path
+                            .strip_prefix("/files/")
+                            .and_then(|path| path.strip_suffix(".metadata"))
+                        {
+                            files
+                                .iter()
+                                .find(|(candidate, _, _)| candidate == filename)
+                                .map(|(filename, _, _)| {
+                                    let version = filename
+                                        .strip_prefix("demo_pkg-")
+                                        .expect("fixture distribution name")
+                                        .split('-')
+                                        .next()
+                                        .expect("fixture distribution version")
+                                        .trim_end_matches(".tar.gz");
+                                    (
+                                        "200 OK",
+                                        "text/plain",
+                                        format!(
+                                            "Metadata-Version: 2.1\nName: demo-pkg\nVersion: {version}\n"
+                                        )
+                                        .into_bytes(),
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    ("404 Not Found", "text/plain", b"missing".to_vec())
+                                })
+                        } else if let Some(filename) = path.strip_prefix("/files/") {
+                            files
+                                .iter()
+                                .find(|(candidate, _, _)| candidate == filename)
+                                .map(|(_, bytes, _)| {
+                                    ("200 OK", "application/octet-stream", bytes.clone())
+                                })
+                                .unwrap_or_else(|| {
+                                    ("404 Not Found", "text/plain", b"missing".to_vec())
+                                })
+                        } else {
+                            ("404 Not Found", "text/plain", b"missing".to_vec())
+                        };
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .expect("write registry headers");
+                    stream.write_all(&body).expect("write registry body");
+                }
+            });
+            Self {
+                address,
+                thread: Some(thread),
+            }
+        }
+
+        fn index_url(&self) -> String {
+            format!("http://{}/simple", self.address)
+        }
+
+        fn authenticated_index_url(&self) -> String {
+            format!("http://poly:secret@{}/simple", self.address)
+        }
+
+        fn artifact_url(&self, filename: &str) -> String {
+            format!("http://{}/files/{filename}", self.address)
+        }
+    }
+
+    fn read_request(stream: &mut TcpStream) -> (String, Option<String>) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set registry read timeout");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = stream.read(&mut buffer).expect("read registry request");
+            assert_ne!(count, 0, "registry request ended before its headers");
+            request.extend_from_slice(&buffer[..count]);
+            assert!(request.len() <= 64 * 1024, "registry request is too large");
+        }
+        let request = String::from_utf8_lossy(&request);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_ascii_whitespace().nth(1))
+            .unwrap_or("/")
+            .to_owned();
+        let authorization = request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim().to_owned())
+        });
+        (path, authorization)
+    }
+
+    impl Drop for LocalRegistry {
+        fn drop(&mut self) {
+            if let Ok(mut stream) = TcpStream::connect(self.address) {
+                let _ = write!(
+                    stream,
+                    "GET /shutdown HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                    self.address
+                );
+            }
+            if let Some(thread) = self.thread.take() {
+                thread.join().expect("join local registry");
+            }
+        }
     }
 
     fn write_project(directory: &Path, wheel_url: &str, hash: &str) {
@@ -499,6 +685,251 @@ dependencies = [{{ name = "demo-pkg" }}]
             directory,
             std::env::current_exe().expect("current executable"),
         )
+    }
+
+    #[test]
+    fn resolves_latest_version_writes_lock_and_installs() {
+        let directory = tempfile::tempdir().expect("create project");
+        let mut files = Vec::new();
+        let mut old_hash = None;
+        for (version, value) in [("1.0.0", 1), ("2.0.0", 2)] {
+            let filename = format!("demo_pkg-{version}-py3-none-any.whl");
+            let bytes = wheel_bytes_for(version, value);
+            let path = directory.path().join(&filename);
+            fs::write(&path, &bytes).expect("write registry wheel");
+            let hash = wheel_sha256(&path).expect("hash registry wheel");
+            if version == "1.0.0" {
+                old_hash = Some(hash.clone());
+            }
+            files.push((filename, bytes, hash));
+        }
+        let registry = LocalRegistry::start(files);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "local"
+url = "{}"
+default = true
+"#,
+                registry.index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+        fs::write(
+            directory.path().join("uv.lock"),
+            format!(
+                r#"version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "demo-pkg"
+version = "1.0.0"
+source = {{ registry = "{}" }}
+wheels = [
+    {{ url = "{}", hash = "sha256:{}" }},
+]
+
+[[package]]
+name = "project"
+version = "0.1.0"
+source = {{ virtual = "." }}
+dependencies = [{{ name = "demo-pkg" }}]
+"#,
+                registry.index_url(),
+                registry.artifact_url("demo_pkg-1.0.0-py3-none-any.whl"),
+                old_hash.expect("old wheel hash"),
+            ),
+        )
+        .expect("write existing uv.lock");
+
+        let report = sync(&options(directory.path())).expect("resolve and sync project");
+        assert_eq!(report.packages, ["demo-pkg==2.0.0"]);
+        assert_eq!(report.downloaded, 1);
+        assert_eq!(
+            fs::read_to_string(report.target.join("demo_pkg/__init__.py"))
+                .expect("read installed package"),
+            "VALUE = 2\n"
+        );
+        let lock = fs::read_to_string(directory.path().join("uv.lock")).expect("read uv.lock");
+        assert!(lock.contains("version = \"2.0.0\""), "{lock}");
+        assert!(!lock.contains("version = \"1.0.0\""), "{lock}");
+
+        let frozen = sync_frozen(&options(directory.path())).expect("reuse generated lock");
+        assert_eq!(frozen.packages, ["demo-pkg==2.0.0"]);
+        assert_eq!((frozen.downloaded, frozen.cache_hits), (0, 1));
+    }
+
+    #[test]
+    fn resolves_latest_version_with_a_generic_python_wheel() {
+        let directory = tempfile::tempdir().expect("create project");
+        let mut files = Vec::new();
+        for (version, tag) in [
+            ("1.0.0", "py3-none-any"),
+            ("2.0.0", "py314-none-any"),
+            (
+                "3.0.0",
+                "py3-none-manylinux_2_17_x86_64.manylinux_2_17_aarch64.win_amd64.win_arm64.macosx_11_0_universal2",
+            ),
+        ] {
+            let filename = format!("demo_pkg-{version}-{tag}.whl");
+            let bytes = wheel_bytes_for(version, version.as_bytes()[0] - b'0');
+            let path = directory.path().join(&filename);
+            fs::write(&path, &bytes).expect("write registry wheel");
+            let hash = wheel_sha256(&path).expect("hash registry wheel");
+            files.push((filename, bytes, hash));
+        }
+        let registry = LocalRegistry::start(files);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "local"
+url = "{}"
+default = true
+"#,
+                registry.index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+
+        let report = sync(&options(directory.path())).expect("resolve generic wheel version");
+        assert_eq!(report.packages, ["demo-pkg==1.0.0"]);
+        let lock = fs::read_to_string(directory.path().join("uv.lock")).expect("read uv.lock");
+        assert!(lock.contains("version = \"1.0.0\""), "{lock}");
+        assert!(!lock.contains("version = \"2.0.0\""), "{lock}");
+        assert!(!lock.contains("version = \"3.0.0\""), "{lock}");
+    }
+
+    #[test]
+    fn resolves_and_downloads_from_an_authenticated_index() {
+        let directory = tempfile::tempdir().expect("create project");
+        let filename = "demo_pkg-1.0.0-py3-none-any.whl";
+        let bytes = wheel_bytes();
+        let path = directory.path().join(filename);
+        fs::write(&path, &bytes).expect("write registry wheel");
+        let hash = wheel_sha256(&path).expect("hash registry wheel");
+        let registry = LocalRegistry::start_authenticated(vec![(filename.to_owned(), bytes, hash)]);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "private"
+url = "{}"
+default = true
+"#,
+                registry.authenticated_index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+
+        let report = sync(&options(directory.path())).expect("sync authenticated package");
+        assert_eq!(report.packages, ["demo-pkg==1.0.0"]);
+        assert_eq!(report.downloaded, 1);
+        assert!(report.target.join("demo_pkg/__init__.py").is_file());
+        let lock = fs::read_to_string(directory.path().join("uv.lock")).expect("read uv.lock");
+        assert!(!lock.contains("secret"), "{lock}");
+    }
+
+    #[test]
+    fn resolution_failure_preserves_the_existing_lock() {
+        let directory = tempfile::tempdir().expect("create project");
+        let filename = "demo_pkg-1.0.0.tar.gz";
+        let bytes = b"not a source archive".to_vec();
+        let path = directory.path().join(filename);
+        fs::write(&path, &bytes).expect("write source fixture");
+        let hash = wheel_sha256(&path).expect("hash source fixture");
+        let registry = LocalRegistry::start(vec![(filename.to_owned(), bytes, hash)]);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "local"
+url = "{}"
+default = true
+"#,
+                registry.index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+        let previous_lock = "existing lock remains unchanged\n";
+        fs::write(directory.path().join("uv.lock"), previous_lock).expect("write existing lock");
+
+        let error = sync(&options(directory.path())).expect_err("reject source-only resolution");
+        assert!(
+            matches!(error, Error::Resolve(_) | Error::UnsupportedSource { .. }),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.path().join("uv.lock")).expect("read existing lock"),
+            previous_lock
+        );
+    }
+
+    #[test]
+    fn invalid_target_preserves_the_existing_lock() {
+        let directory = tempfile::tempdir().expect("create project");
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+"#,
+        )
+        .expect("write pyproject.toml");
+        let previous_lock = "existing lock remains unchanged\n";
+        fs::write(directory.path().join("uv.lock"), previous_lock).expect("write existing lock");
+        let mut options = options(directory.path());
+        options.target_dir = Some(directory.path().to_path_buf());
+
+        let error = sync(&options).expect_err("reject project root as installation target");
+        assert!(matches!(error, Error::UnsafeTarget(_)), "{error}");
+        assert_eq!(
+            fs::read_to_string(directory.path().join("uv.lock")).expect("read existing lock"),
+            previous_lock
+        );
     }
 
     #[test]

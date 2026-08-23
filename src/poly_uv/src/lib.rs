@@ -10,12 +10,13 @@ use thiserror::Error;
 use uv_workspace::{DiscoveryOptions, Workspace, WorkspaceCache};
 
 mod lock;
+mod resolve;
 mod stage;
 mod sync;
 
 pub use lock::{InstallPlan, LockedPackage, plan_lock, plan_lock_contents};
 pub use stage::{stage_locked_wheel, stage_wheel_archive};
-pub use sync::{SyncOptions, SyncReport, sync_frozen};
+pub use sync::{SyncOptions, SyncReport, sync, sync_frozen};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -52,6 +53,26 @@ pub enum Error {
     PlatformTags(String),
     #[error("uv could not materialize the selected lockfile dependency graph: {0}")]
     LockResolution(String),
+    #[error("the workspace has no Python version compatible with every member")]
+    EmptyPythonRange,
+    #[error("uv could not lower the project metadata: {0}")]
+    Metadata(#[from] uv_distribution::MetadataError),
+    #[error("uv could not prepare the project requirements: {0}")]
+    Requirements(#[from] uv_requirements::Error),
+    #[error("uv could not resolve the project: {0}")]
+    Resolve(#[from] uv_resolver::ResolveError),
+    #[error("uv could not create the lockfile: {0}")]
+    CreateLock(#[from] uv_resolver::LockError),
+    #[error("uv could not serialize the lockfile: {0}")]
+    LockSerialize(String),
+    #[error("invalid scoped dependency override: {0}")]
+    ScopedOverride(#[from] uv_configuration::ScopedOverrideSourceError),
+    #[error("failed to query a configured flat package index: {0}")]
+    FlatIndex(#[from] uv_client::FlatIndexError),
+    #[error("invalid dependency group: {0}")]
+    DependencyGroup(#[from] uv_workspace::dependency_groups::DependencyGroupError),
+    #[error("invalid package index credentials: {0}")]
+    IndexCredentials(#[from] uv_distribution_types::IndexCredentialsError),
     #[error("invalid wheel filename `{filename}`: {message}")]
     InvalidWheel { filename: String, message: String },
     #[error(

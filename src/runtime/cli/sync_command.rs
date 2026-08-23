@@ -28,14 +28,7 @@ impl SyncCommand {
             tag_print_help(Tag::SyncCommand, true);
             Global::exit(0);
         }
-        if !options.frozen {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> lock generation is not implemented yet; use <b>poly sync --frozen<r> with an existing uv.lock."
-            );
-            Output::flush();
-            Global::exit(1);
-        }
-
+        let frozen = options.frozen;
         let project = match options.project {
             Some(path) => path,
             None => std::env::current_dir().unwrap_or_else(|error| {
@@ -56,7 +49,12 @@ impl SyncCommand {
             Global::exit(1);
         });
         let options = poly_uv::SyncOptions::new(project, executable);
-        let report = poly_uv::sync_frozen(&options).unwrap_or_else(|error| {
+        let report = if frozen {
+            poly_uv::sync_frozen(&options)
+        } else {
+            poly_uv::sync(&options)
+        };
+        let report = report.unwrap_or_else(|error| {
             bun_core::pretty_errorln!("<r><red>error<r><d>:<r> {}", error);
             Output::flush();
             Global::exit(1);

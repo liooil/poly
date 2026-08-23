@@ -34,7 +34,7 @@
 - [x] `pyproject.toml` 项目发现与 `uv.lock` 校验
 - [x] 纯 wheel 选择、lock 哈希校验与 staging
 - [x] `poly sync --frozen` 消费已有 lock
-- [ ] uv resolver lock 生成
+- [x] uv resolver lock 生成
 - [x] 同进程 wheel 下载与缓存
 - [x] wheel / sdist 类型检查与显式拒绝
 - [x] 基于 wheel tag 的原生扩展拒绝策略

@@ -144,12 +144,12 @@ describe("bun", () => {
       expect(xHelp).not.toContain("Usage: bun x");
     });
 
-    test("sync help documents the frozen-lock boundary", async () => {
+    test("sync help documents resolution and frozen mode", async () => {
       const syncHelp = await runHelp(["sync", "--help"]);
 
-      expect(syncHelp).toContain("Usage: poly sync --frozen [options]");
+      expect(syncHelp).toContain("Usage: poly sync [options]");
       expect(syncHelp).toContain("--project <path>");
-      expect(syncHelp).toContain("Resolution and lockfile updates are not implemented yet.");
+      expect(syncHelp).toContain("update uv.lock");
       expect(syncHelp).not.toContain("Usage: bun sync");
     });
 
@@ -195,19 +195,22 @@ describe("bun", () => {
   });
 
   describe("sync", () => {
-    test("without --frozen reports the unresolved boundary", async () => {
+    test("resolves an empty project and writes uv.lock", async () => {
+      using dir = tempDir("poly-sync-resolve", {
+        "pyproject.toml": `[project]\nname = "sync-project"\nversion = "1.0.0"\nrequires-python = ">=3.12"\ndependencies = []\n`,
+      });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "sync"],
+        cmd: [bunExe(), "sync", "--project", String(dir)],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toBe("");
-      expect(stderr).toContain("lock generation is not implemented yet");
-      expect(stderr).toContain("poly sync --frozen");
-      expect(exitCode).toBe(1);
+      expect(stdout).toContain("Synced 0 Python packages");
+      expect(stderr).toBe("");
+      expect(await Bun.file(`${dir}/uv.lock`).text()).toContain('requires-python = ">=3.12"');
+      expect(exitCode).toBe(0);
     });
 
     test("--frozen requires an existing uv.lock", async () => {
