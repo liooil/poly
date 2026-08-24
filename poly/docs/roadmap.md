@@ -13,9 +13,9 @@
 - [x] RustPython bridge 真实调用测试
 - [x] Bun/JSC 与 RustPython 同线程执行模型
 - [x] Bun 补丁 apply/reverse-apply 检查
-- [ ] 完整 Bun Windows debug build
-- [ ] 运行 `.py` 入口验证
-- [ ] 运行 TS→Python 示例验证
+- [x] 完整 Bun Windows debug build
+- [x] 运行 `.py` 入口验证
+- [x] 运行 TS→Python 示例验证
 
 ## M1：可开发的双语言项目
 
@@ -38,8 +38,8 @@
 - [x] 同进程 wheel 下载与缓存
 - [x] wheel / sdist 类型检查与显式拒绝
 - [x] 基于 wheel tag 的原生扩展拒绝策略
-- [ ] RustPython smoke imports
-- [ ] 兼容性报告
+- [x] `poly sync --check` RustPython smoke imports
+- [x] staging wheel 静态兼容性报告
 - [x] 依赖缓存
 
 ## M3：Bundle

@@ -54,12 +54,14 @@ import { python } from "poly";
 poly run app.ts        # 运行 TypeScript 入口
 poly run tool.py       # 运行 Python 入口
 poly repl python       # 直接进入 Python REPL 模式
-poly sync              # 解析两个生态的依赖
+poly sync              # 解析、锁定并安装 Python 依赖
+poly sync --check      # 额外用 RustPython smoke-import 已安装模块
+poly sync --frozen     # 严格按已有 uv.lock 安装
 poly build app.ts      # 生成独立应用
 ```
 
-`poly run` 的入口分派和多语言 REPL 属于当前原型。静态跨语言 import、
-`poly sync` 和 `poly build` 尚未实现。
+`poly run` 的入口分派、多语言 REPL 和同进程 Python 依赖同步属于当前原型。
+`poly build` 尚未实现。
 
 REPL history 由所有语言共享。回看其他模式的记录时会显示为 `.py value = 42`
 这样的 inline 命令，从而仍在最初录入它的语言中执行。
@@ -93,7 +95,9 @@ my-app/
 
 Poly 负责两个生态之间的兼容性边界。uv 用于依赖解析、锁定和物化，但
 RustPython 不是 uv 官方支持的解释器，也无法加载任意 CPython 原生 wheel。
-因此 Poly 需要提供自己的兼容性检查和报告。
+因此 Poly 会在提交前静态扫描所有 staging wheel 并拒绝不支持的产物。
+`poly sync --check` 还会在新的 RustPython VM 中导入其中的源码模块；该显式检查
+会执行包的顶层代码，并不是安全沙箱。
 
 ## 运行时如何组合
 
@@ -132,7 +136,8 @@ value 和明确的生命周期语义取代这个底层接口。
 | Python 模块缓存与 reload 语义 | 计划中 |
 | 静态跨语言 import 与 callable proxy | 计划中 |
 | 协作式异步执行 | 计划中 |
-| 带 uv 兼容性检查的 `poly sync` | 计划中 |
+| `poly sync` 解析、锁定、物化与静态兼容性报告 | 已实现 |
+| `poly sync --check` RustPython smoke import | 已实现 |
 | 生成独立应用的 `poly build` | 计划中 |
 
 准确的已验证边界见[验证记录](poly/docs/validation.md)，后续计划见

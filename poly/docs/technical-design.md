@@ -141,8 +141,8 @@ CPython wheel 均不能通过外部 Python、构建后端或其他子进程完�
 `poly_uv` 使用 uv 自己的 `Lock::from_toml` 与 lock traversal 验证
 `uv.lock`、选择当前 workspace member 的传递依赖，并求值 Python、平台、
 实现类型 marker 与 resolution fork。当前保守边界只接受包含通用 Python 3
-tag、`none` ABI 与 `any` platform 的 wheel；具体包仍必须在物化后通过
-RustPython smoke import。
+tag、`none` ABI 与 `any` platform 的 wheel。物化后的静态扫描始终执行；
+RustPython smoke import 由显式的 `--check` 开启。
 
 `poly sync` 在进程内组合 uv 的 workspace lowering、registry client、universal
 resolver 与 lock 数据结构。默认模式不沿用旧锁中的版本偏好，而是刷新 index、
@@ -153,12 +153,23 @@ resolver 与 lock 数据结构。默认模式不沿用旧锁中的版本偏好�
 按 SHA-256 建立项目级持久缓存。物化阶段按 lock 中的文件名与 SHA-256
 校验 wheel，再用 `uv_extract` 同进程解包，并给 `uv_install_wheel` 提供 Poly
 自己的 `Layout`，把 `purelib`/`platlib` 直接指向临时的 `.poly/python`
-环境。只有全部包安装成功才以目录 rename 替换旧环境；下载、校验或 staging
-失败时旧环境保持不变。这条路径不需要发现、启动或伪造 CPython virtualenv。
+环境。Poly 根据每个 distribution 的 `RECORD` 推导安全的 import 候选，并拒绝
+原生动态库和没有对应源码的 CPython bytecode；没有源码 import 候选的包标记为
+`unverified`，不会伪报兼容。默认 `poly sync` 到此为止，不执行依赖代码。
+
+`poly sync --check` 会在同一进程的新 RustPython VM 中逐个导入这些候选。VM 的
+搜索路径只包含 frozen 标准库和 staging 环境，不读取用户 site、环境变量或
+`site.py`，也不写 bytecode。这个隔离限制的是 Python import 环境，并不是 OS
+安全沙箱：包的顶层代码仍会执行，因此 smoke import 必须保持显式启用。
+
+静态扫描或 smoke import 失败发生在 commit 之前，原有 `uv.lock` 与
+`.poly/python` 都保持不变。验证通过后才用目录 rename 激活新环境并原子写入
+新 lock；若 lock 写入失败，环境事务会恢复旧目录。下载、校验、staging 和
+兼容性失败同样不会替换旧环境。这条路径不需要发现、启动或伪造 CPython
+virtualenv，也不启动 Python 或 uv 子进程。
 
 Python 文件入口、REPL 和 TS→Python module bridge 会从项目祖先中发现
-`.poly/python` 并加入 RustPython 的 `sys.path`。物化后的自动 smoke import 与
-兼容性报告仍未实现。
+`.poly/python` 并加入 RustPython 的 `sys.path`。
 
 ## 7. Bundle
 

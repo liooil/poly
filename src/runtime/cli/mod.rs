@@ -649,7 +649,7 @@ pub mod help_command {
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(polyx)<r>
   <b><magenta>repl<r>                           Start a REPL session
   <b><magenta>exec<r>                           Run a shell script directly
-  <b><magenta>sync<r>                           Install Python dependencies from uv.lock
+  <b><magenta>sync<r>                           Resolve and install Python dependencies
 
   <b><blue>install<r>                        Install dependencies for a package.json <d>(poly i)<r>
   <b><blue>add<r>       <d>{:<16}<r>     Add a dependency to package.json <d>(poly a)<r>
@@ -2227,11 +2227,13 @@ the production dependency graph into .poly/python.
 
 <b>Options:<r>
   <cyan>--frozen<r>                 Require and consume the existing uv.lock
+  <cyan>--check<r>                  Import installed modules with RustPython before commit
   <cyan>--project <blue>\\<path\\><r>          Discover the Python project from this directory
   <cyan>-h, --help<r>              Display this menu and exit
 
 <b>Examples:<r>
   <b><green>poly sync<r>
+  <b><green>poly sync --check<r>
   <b><green>poly sync --frozen<r>
   <b><green>poly sync<r> <cyan>--project<r> <blue>./examples/app<r>
 "

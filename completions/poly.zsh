@@ -567,6 +567,7 @@ _poly_upgrade_completion() {
 _poly_sync_completion() {
     _arguments -s -C \
         '--frozen[Require and consume the existing uv.lock]' \
+        '--check[Import installed modules with RustPython before commit]' \
         '--project[Discover the Python project from this directory]:project directory:_directories' \
         '-h[Display help and exit]' \
         '--help[Display help and exit]' &&
@@ -953,7 +954,7 @@ _poly() {
             'remove\:"Remove a dependency from package.json" '
             'repl\:"Start a Poly REPL session" '
             'run\:"Run JavaScript, a package.json script, or a package binary" '
-            'sync\:"Install Python dependencies from uv.lock" '
+            'sync\:"Resolve and install Python dependencies" '
             'test\:"Run unit tests" '
             'unlink\:"Unregister a local npm package" '
             'update\:"Update dependencies and package.json" '

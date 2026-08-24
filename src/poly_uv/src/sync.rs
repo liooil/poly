@@ -8,10 +8,11 @@ use uv_fs::{LockedFile, LockedFileMode};
 use uv_pep508::VerbatimUrl;
 use uv_workspace::{DiscoveryOptions, MemberDiscovery, VirtualProject, WorkspaceCache};
 
+use crate::compatibility::{inspect_staged_package, run_smoke_imports};
 use crate::lock::plan_lock_contents_for_project;
 use crate::resolve::{client_builder_for_indexes, project_indexes, resolve_project_lock};
 use crate::stage::{stage_verified_locked_wheel, wheel_sha256_async};
-use crate::{Error, InstallPlan, LockedPackage};
+use crate::{CompatibilityReport, Error, InstallPlan, LockedPackage};
 
 /// Configuration for resolving or materializing a uv project.
 #[derive(Debug, Clone)]
@@ -24,6 +25,8 @@ pub struct SyncOptions {
     pub cache_dir: Option<PathBuf>,
     /// Installation target override, relative to the workspace root unless absolute.
     pub target_dir: Option<PathBuf>,
+    /// Run imports in an isolated RustPython VM before committing the environment.
+    pub smoke_check: bool,
 }
 
 impl SyncOptions {
@@ -33,6 +36,7 @@ impl SyncOptions {
             sys_executable: sys_executable.into(),
             cache_dir: None,
             target_dir: None,
+            smoke_check: false,
         }
     }
 }
@@ -52,6 +56,8 @@ pub struct SyncReport {
     pub cache_hits: usize,
     /// Non-fatal cleanup diagnostics emitted after commit.
     pub warnings: Vec<String>,
+    /// Static and optional dynamic RustPython compatibility results.
+    pub compatibility: CompatibilityReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,10 +127,6 @@ fn sync_with_mode(options: &SyncOptions, mode: SyncMode) -> Result<SyncReport, E
         executor.block_on(resolve_project_lock(&project, &resolver_cache_dir))?
     };
     let plan = plan_lock_contents_for_project(&contents, &project_root, project.project_name())?;
-    if mode == SyncMode::Resolve {
-        executor.block_on(uv_fs::write_atomic(&lock_path, &contents))?;
-    }
-
     let _cache_lock = executor
         .block_on(LockedFile::acquire(
             cache_dir.join(".lock"),
@@ -173,15 +175,33 @@ fn sync_with_mode(options: &SyncOptions, mode: SyncMode) -> Result<SyncReport, E
                 })?;
         }
     }
-    drop(executor);
-
-    let warnings = stage_and_commit(
+    let (staged, mut compatibility) = stage_environment(
         &plan,
         &archives,
         &target_dir,
         &options.sys_executable,
         (poly_python::PYTHON_VERSION.0, poly_python::PYTHON_VERSION.1),
     )?;
+    if compatibility.has_failures() {
+        return Err(Error::Compatibility(compatibility));
+    }
+    if options.smoke_check {
+        run_smoke_imports(&mut compatibility, staged.path())?;
+        if compatibility.has_failures() {
+            return Err(Error::Compatibility(compatibility));
+        }
+    }
+
+    let active = staged.activate()?;
+    if mode == SyncMode::Resolve
+        && let Err(error) = executor.block_on(uv_fs::write_atomic(&lock_path, &contents))
+    {
+        let commit = error.to_string();
+        active.rollback(commit)?;
+        return Err(Error::Io(error));
+    }
+    drop(executor);
+    let warnings = active.finish();
     Ok(SyncReport {
         project_root,
         target: target_dir,
@@ -193,6 +213,7 @@ fn sync_with_mode(options: &SyncOptions, mode: SyncMode) -> Result<SyncReport, E
         downloaded,
         cache_hits,
         warnings,
+        compatibility,
     })
 }
 
@@ -364,13 +385,118 @@ async fn download_one(
     Ok(temporary)
 }
 
-fn stage_and_commit(
+struct StagedEnvironment {
+    directory: tempfile::TempDir,
+    staged_target: PathBuf,
+    target: PathBuf,
+}
+
+impl StagedEnvironment {
+    fn path(&self) -> &Path {
+        &self.staged_target
+    }
+
+    fn activate(self) -> Result<ActiveEnvironment, Error> {
+        let parent = self
+            .target
+            .parent()
+            .ok_or_else(|| Error::UnsafeTarget(self.target.clone()))?;
+        let previous = match fs::symlink_metadata(&self.target) {
+            Ok(_) => {
+                let backup_parent = tempfile::Builder::new()
+                    .prefix(".poly-previous-")
+                    .tempdir_in(parent)?;
+                let backup = backup_parent.path().join("python");
+                fs::rename(&self.target, &backup)?;
+                Some((backup_parent, backup))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+
+        if let Err(commit) = fs::rename(&self.staged_target, &self.target) {
+            if let Some((backup_parent, backup)) = previous
+                && let Err(rollback) = fs::rename(&backup, &self.target)
+            {
+                let backup = backup_parent.keep().join("python");
+                return Err(Error::Rollback {
+                    target: self.target,
+                    commit: commit.to_string(),
+                    rollback: rollback.to_string(),
+                    backup,
+                });
+            }
+            return Err(Error::Commit {
+                target: self.target,
+                source: commit,
+            });
+        }
+        drop(self.directory);
+        Ok(ActiveEnvironment {
+            target: self.target,
+            previous,
+        })
+    }
+}
+
+struct ActiveEnvironment {
+    target: PathBuf,
+    previous: Option<(tempfile::TempDir, PathBuf)>,
+}
+
+impl ActiveEnvironment {
+    fn rollback(self, commit: String) -> Result<(), Error> {
+        let Self { target, previous } = self;
+        let Some((backup_parent, backup)) = previous else {
+            return fs::remove_dir_all(&target).map_err(|rollback| Error::TransactionRollback {
+                target: target.clone(),
+                commit,
+                rollback: rollback.to_string(),
+                recovery: target,
+            });
+        };
+        let failed = backup_parent.path().join("failed-python");
+        if let Err(rollback) = fs::rename(&target, &failed) {
+            let recovery = backup_parent.keep().join("python");
+            return Err(Error::TransactionRollback {
+                target,
+                commit,
+                rollback: rollback.to_string(),
+                recovery,
+            });
+        }
+        if let Err(rollback) = fs::rename(&backup, &target) {
+            let recovery = backup_parent.keep().join("python");
+            return Err(Error::TransactionRollback {
+                target,
+                commit,
+                rollback: rollback.to_string(),
+                recovery,
+            });
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if let Some((backup_parent, _)) = self.previous
+            && let Err(error) = backup_parent.close()
+        {
+            warnings.push(format!(
+                "the new environment is active, but its generated backup could not be removed: {error}"
+            ));
+        }
+        warnings
+    }
+}
+
+fn stage_environment(
     plan: &InstallPlan,
     archives: &[PathBuf],
     target: &Path,
     sys_executable: &Path,
     python_version: (u8, u8),
-) -> Result<Vec<String>, Error> {
+) -> Result<(StagedEnvironment, CompatibilityReport), Error> {
     debug_assert_eq!(plan.packages.len(), archives.len());
     let parent = target
         .parent()
@@ -381,56 +507,28 @@ fn stage_and_commit(
         .tempdir_in(parent)?;
     let staged_target = staging.path().join("python");
     fs::create_dir_all(&staged_target)?;
+    let mut packages = Vec::with_capacity(plan.packages.len());
     for (package, archive) in plan.packages.iter().zip(archives) {
-        stage_verified_locked_wheel(
+        let dist_info = stage_verified_locked_wheel(
             package,
             archive,
             &staged_target,
             sys_executable,
             python_version,
         )?;
+        packages.push(inspect_staged_package(package, &dist_info)?);
     }
-
-    let mut warnings = Vec::new();
-    let previous = match fs::symlink_metadata(target) {
-        Ok(_) => {
-            let backup_parent = tempfile::Builder::new()
-                .prefix(".poly-previous-")
-                .tempdir_in(parent)?;
-            let backup = backup_parent.path().join("python");
-            fs::rename(target, &backup)?;
-            Some((backup_parent, backup))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-
-    if let Err(commit) = fs::rename(&staged_target, target) {
-        if let Some((backup_parent, backup)) = previous
-            && let Err(rollback) = fs::rename(&backup, target)
-        {
-            let backup = backup_parent.keep().join("python");
-            return Err(Error::Rollback {
-                target: target.to_path_buf(),
-                commit: commit.to_string(),
-                rollback: rollback.to_string(),
-                backup,
-            });
-        }
-        return Err(Error::Commit {
+    Ok((
+        StagedEnvironment {
+            directory: staging,
+            staged_target,
             target: target.to_path_buf(),
-            source: commit,
-        });
-    }
-
-    if let Some((backup_parent, _)) = previous
-        && let Err(error) = backup_parent.close()
-    {
-        warnings.push(format!(
-            "the new environment is active, but its generated backup could not be removed: {error}"
-        ));
-    }
-    Ok(warnings)
+        },
+        CompatibilityReport {
+            smoke_checked: false,
+            packages,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -452,32 +550,49 @@ mod tests {
     }
 
     fn wheel_bytes_for(version: &str, value: u8) -> Vec<u8> {
+        wheel_bytes_with_files(
+            version,
+            vec![(
+                "demo_pkg/__init__.py".to_owned(),
+                format!("VALUE = {value}\n").into_bytes(),
+            )],
+        )
+    }
+
+    fn wheel_bytes_with_files(version: &str, mut files: Vec<(String, Vec<u8>)>) -> Vec<u8> {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
-        for (path, contents) in [
+        let dist_info = format!("demo_pkg-{version}.dist-info");
+        let wheel_path = format!("{dist_info}/WHEEL");
+        let metadata_path = format!("{dist_info}/METADATA");
+        let record_path = format!("{dist_info}/RECORD");
+        let mut record = files
+            .iter()
+            .map(|(path, _)| format!("{path},,"))
+            .collect::<Vec<_>>();
+        record.extend([
+            format!("{wheel_path},,"),
+            format!("{metadata_path},,"),
+            format!("{record_path},,"),
+        ]);
+        files.extend([
             (
-                "demo_pkg/__init__.py".to_owned(),
-                format!("VALUE = {value}\n"),
+                wheel_path,
+                b"Wheel-Version: 1.0\nGenerator: poly-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+                    .to_vec(),
             ),
             (
-                format!("demo_pkg-{version}.dist-info/WHEEL"),
-                "Wheel-Version: 1.0\nGenerator: poly-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n".to_owned(),
+                metadata_path,
+                format!("Metadata-Version: 2.1\nName: demo-pkg\nVersion: {version}\n")
+                    .into_bytes(),
             ),
-            (
-                format!("demo_pkg-{version}.dist-info/METADATA"),
-                format!("Metadata-Version: 2.1\nName: demo-pkg\nVersion: {version}\n"),
-            ),
-            (
-                format!("demo_pkg-{version}.dist-info/RECORD"),
-                format!(
-                    "demo_pkg/__init__.py,,\ndemo_pkg-{version}.dist-info/WHEEL,,\ndemo_pkg-{version}.dist-info/METADATA,,\ndemo_pkg-{version}.dist-info/RECORD,,\n"
-                ),
-            ),
-        ] {
-            writer.start_file(path, options).expect("start wheel member");
+            (record_path, format!("{}\n", record.join("\n")).into_bytes()),
+        ]);
+        for (path, contents) in files {
             writer
-                .write_all(contents.as_bytes())
-                .expect("write wheel member");
+                .start_file(path, options)
+                .expect("start wheel member");
+            writer.write_all(&contents).expect("write wheel member");
         }
         writer.finish().expect("finish wheel archive").into_inner()
     }
@@ -753,9 +868,19 @@ dependencies = [{{ name = "demo-pkg" }}]
         )
         .expect("write existing uv.lock");
 
-        let report = sync(&options(directory.path())).expect("resolve and sync project");
+        let mut sync_options = options(directory.path());
+        sync_options.smoke_check = true;
+        let report = sync(&sync_options).expect("resolve, check, and sync project");
         assert_eq!(report.packages, ["demo-pkg==2.0.0"]);
         assert_eq!(report.downloaded, 1);
+        assert!(report.compatibility.smoke_checked);
+        assert_eq!(
+            report
+                .compatibility
+                .count(crate::CompatibilityStatus::SmokeCompatible),
+            1
+        );
+        assert_eq!(report.compatibility.packages[0].imports, ["demo_pkg"]);
         assert_eq!(
             fs::read_to_string(report.target.join("demo_pkg/__init__.py"))
                 .expect("read installed package"),
@@ -901,6 +1026,158 @@ default = true
             fs::read_to_string(directory.path().join("uv.lock")).expect("read existing lock"),
             previous_lock
         );
+    }
+
+    #[test]
+    fn smoke_import_failure_preserves_the_existing_lock_and_environment() {
+        let directory = tempfile::tempdir().expect("create project");
+        let filename = "demo_pkg-2.0.0-py3-none-any.whl";
+        let bytes = wheel_bytes_with_files(
+            "2.0.0",
+            vec![(
+                "demo_pkg/__init__.py".to_owned(),
+                b"import missing_poly_smoke_dependency\n".to_vec(),
+            )],
+        );
+        let path = directory.path().join(filename);
+        fs::write(&path, &bytes).expect("write registry wheel");
+        let hash = wheel_sha256(&path).expect("hash registry wheel");
+        let registry = LocalRegistry::start(vec![(filename.to_owned(), bytes, hash)]);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "local"
+url = "{}"
+default = true
+"#,
+                registry.index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+        let previous_lock = "existing lock remains unchanged\n";
+        fs::write(directory.path().join("uv.lock"), previous_lock).expect("write existing lock");
+        let target = directory.path().join(".poly/python");
+        fs::create_dir_all(&target).expect("create previous environment");
+        fs::write(target.join("preserved.py"), "PRESERVED = True\n")
+            .expect("write previous environment");
+        let mut sync_options = options(directory.path());
+        sync_options.smoke_check = true;
+
+        let error = sync(&sync_options).expect_err("reject failed smoke import");
+        let Error::Compatibility(report) = error else {
+            panic!("unexpected error: {error}");
+        };
+        assert_eq!(report.count(crate::CompatibilityStatus::Incompatible), 1);
+        assert!(report.packages[0].diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == crate::CompatibilityDiagnosticKind::ImportFailure
+                && diagnostic.message.contains("missing_poly_smoke_dependency")
+        }));
+        assert_eq!(
+            fs::read_to_string(directory.path().join("uv.lock")).expect("read existing lock"),
+            previous_lock
+        );
+        assert!(target.join("preserved.py").is_file());
+        assert!(!target.join("demo_pkg/__init__.py").exists());
+    }
+
+    #[test]
+    fn static_compatibility_failure_preserves_the_existing_lock_and_environment() {
+        let directory = tempfile::tempdir().expect("create project");
+        let filename = "demo_pkg-2.0.0-py3-none-any.whl";
+        let bytes = wheel_bytes_with_files(
+            "2.0.0",
+            vec![
+                ("demo_pkg/__init__.py".to_owned(), b"VALUE = 2\n".to_vec()),
+                ("demo_pkg/native.so".to_owned(), b"not native code".to_vec()),
+            ],
+        );
+        let path = directory.path().join(filename);
+        fs::write(&path, &bytes).expect("write registry wheel");
+        let hash = wheel_sha256(&path).expect("hash registry wheel");
+        let registry = LocalRegistry::start(vec![(filename.to_owned(), bytes, hash)]);
+        fs::write(
+            directory.path().join("pyproject.toml"),
+            format!(
+                r#"[project]
+name = "project"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["demo-pkg"]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "local"
+url = "{}"
+default = true
+"#,
+                registry.index_url()
+            ),
+        )
+        .expect("write pyproject.toml");
+        let previous_lock = "existing lock remains unchanged\n";
+        fs::write(directory.path().join("uv.lock"), previous_lock).expect("write existing lock");
+        let target = directory.path().join(".poly/python");
+        fs::create_dir_all(&target).expect("create previous environment");
+        fs::write(target.join("preserved.py"), "PRESERVED = True\n")
+            .expect("write previous environment");
+
+        let error = sync(&options(directory.path())).expect_err("reject native artifact");
+        let Error::Compatibility(report) = error else {
+            panic!("unexpected error: {error}");
+        };
+        assert!(report.packages[0].diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == crate::CompatibilityDiagnosticKind::NativeArtifact
+                && diagnostic.message.contains("native.so")
+        }));
+        assert_eq!(
+            fs::read_to_string(directory.path().join("uv.lock")).expect("read existing lock"),
+            previous_lock
+        );
+        assert!(target.join("preserved.py").is_file());
+        assert!(!target.join("demo_pkg/__init__.py").exists());
+    }
+
+    #[test]
+    fn transaction_rollback_restores_the_previous_environment() {
+        let directory = tempfile::tempdir().expect("create project");
+        let target = directory.path().join("python");
+        fs::create_dir_all(&target).expect("create previous environment");
+        fs::write(target.join("previous.py"), "PREVIOUS = True\n")
+            .expect("write previous environment");
+        let staging = tempfile::Builder::new()
+            .prefix(".poly-sync-")
+            .tempdir_in(directory.path())
+            .expect("create staging directory");
+        let staged_target = staging.path().join("python");
+        fs::create_dir_all(&staged_target).expect("create staged environment");
+        fs::write(staged_target.join("current.py"), "CURRENT = True\n")
+            .expect("write staged environment");
+        let staged = StagedEnvironment {
+            directory: staging,
+            staged_target,
+            target: target.clone(),
+        };
+
+        let active = staged.activate().expect("activate staged environment");
+        assert!(target.join("current.py").is_file());
+        active
+            .rollback("cannot write uv.lock".to_owned())
+            .expect("restore previous environment");
+
+        assert!(target.join("previous.py").is_file());
+        assert!(!target.join("current.py").exists());
     }
 
     #[test]

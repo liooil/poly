@@ -1742,6 +1742,15 @@ pub const PYTHON_VERSION: (u8, u8, u8) = (
     rustpython::vm::version::MICRO as u8,
 );
 
+/// Result of importing one module in an isolated RustPython interpreter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmokeImportResult {
+    /// Fully-qualified module name that was requested.
+    pub module: String,
+    /// Rendered Python traceback when the import failed.
+    pub traceback: Option<String>,
+}
+
 /// The embedded interpreter version in normalized PEP 440 form.
 pub fn python_full_version() -> String {
     use rustpython::vm::version;
@@ -1760,6 +1769,73 @@ pub fn python_full_version() -> String {
         version::MICRO,
         release
     )
+}
+
+/// Import modules from a staged site-packages directory in a fresh VM.
+pub fn smoke_imports(
+    site_packages: &Path,
+    modules: &[String],
+) -> Result<Vec<SmokeImportResult>, PythonError> {
+    let site_packages = fs::canonicalize(site_packages).map_err(|error| {
+        PythonError::new(format!(
+            "cannot open staged Python environment {}: {error}",
+            site_packages.display()
+        ))
+    })?;
+    let modules = modules.to_vec();
+    let worker = std::thread::Builder::new()
+        .name("poly-python-smoke-import".to_owned())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut settings = Settings::default();
+            settings.argv = vec!["<poly-sync-check>".to_owned()];
+            settings.path_list = vec![site_packages.to_string_lossy().into_owned()];
+            settings.isolated = true;
+            settings.ignore_environment = true;
+            settings.user_site_directory = false;
+            settings.import_site = false;
+            settings.safe_path = true;
+            settings.write_bytecode = false;
+            settings.install_signal_handlers = false;
+
+            let interpreter = InterpreterBuilder::new()
+                .settings(settings)
+                .init_stdlib()
+                .interpreter();
+            let results = interpreter.enter(|vm| {
+                modules
+                    .into_iter()
+                    .map(
+                        |module| match vm.import(&vm.ctx.new_str(module.clone()), 0) {
+                            Ok(_) => SmokeImportResult {
+                                module,
+                                traceback: None,
+                            },
+                            Err(error) => SmokeImportResult {
+                                module,
+                                traceback: Some(render_exception(vm, &error)),
+                            },
+                        },
+                    )
+                    .collect()
+            });
+            let exit_code = interpreter.finalize(None);
+            (results, exit_code)
+        })
+        .map_err(|error| {
+            PythonError::new(format!(
+                "cannot start the RustPython smoke-import worker: {error}"
+            ))
+        })?;
+    let (results, exit_code) = worker.join().map_err(|_| {
+        PythonError::new("the RustPython smoke-import worker terminated unexpectedly")
+    })?;
+    if exit_code != 0 {
+        return Err(PythonError::new(format!(
+            "the RustPython smoke-import worker exited with status {exit_code}"
+        )));
+    }
+    Ok(results)
 }
 
 fn append_sys_path(vm: &VirtualMachine, path: &Path) -> rustpython::vm::PyResult<()> {
@@ -2042,6 +2118,29 @@ mod tests {
 
             assert_eq!(run_file(&script, &[]).expect("run synced entrypoint"), 0);
         });
+    }
+
+    #[test]
+    fn smoke_imports_use_an_isolated_staged_environment() {
+        let directory = tempfile::tempdir().expect("create staged environment");
+        let package = directory.path().join("good_package");
+        fs::create_dir_all(&package).expect("create staged package");
+        fs::write(package.join("__init__.py"), "VALUE = 42\n").expect("write staged package");
+
+        let results = smoke_imports(
+            directory.path(),
+            &["good_package".to_owned(), "missing_package".to_owned()],
+        )
+        .expect("run smoke imports");
+        assert_eq!(results[0].module, "good_package");
+        assert_eq!(results[0].traceback, None);
+        assert_eq!(results[1].module, "missing_package");
+        assert!(
+            results[1]
+                .traceback
+                .as_deref()
+                .is_some_and(|traceback| traceback.contains("ModuleNotFoundError"))
+        );
     }
 
     #[test]

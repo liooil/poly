@@ -1,5 +1,30 @@
 # 验证记录
 
+## 2026-08-24：staging 兼容性报告与 `poly sync --check`
+
+- `cargo fmt --all --check`
+- `cargo test --locked -p poly_python`
+  - 18 项单元测试与 1 项 interop 测试通过；
+  - 新 RustPython VM 只从 staging 环境导入，并返回逐模块 traceback。
+- `cargo test --locked -p poly_uv`
+  - 30 项通过，0 项失败；
+  - `RECORD` 扫描覆盖原生动态库、sourceless CPython bytecode、普通包、
+    namespace package 与 data-only distribution；
+  - 本地 registry 覆盖 smoke import 成功和失败，不访问公共网络；
+  - 静态或动态兼容性失败时，原有 `uv.lock` 和 `.poly/python` 均保持不变；
+  - lock commit 失败时使用的环境 rollback 路径可恢复旧目录。
+- `cargo clippy --locked -p poly_python -p poly_uv --all-targets -- -D warnings`
+- `cargo check --locked -p bun_runtime --tests`
+- `USE_SYSTEM_BUN=1 bun test test/cli/bun.test.ts -t "--check reports staged smoke-import validation"`
+  - 系统 Bun 按预期失败，证明新回归测试依赖本分支实现。
+- `bun bd test test/cli/bun.test.ts`
+  - 55 项通过，2 项既有 `todo`，0 项失败；
+  - 覆盖 `--check` 解析、帮助、输出和 Bash、Zsh、Fish 补全。
+- `bun run rust:check-all`
+  - 本机 `x86_64-unknown-linux-gnu` 通过；
+  - 其余 11 个目标缺少对应 cross compiler、平台 SDK 或归档工具，未形成有效
+    检查结果。
+
 ## 2026-08-23：resolver-driven Python sync
 
 - `cargo fmt --all --check`

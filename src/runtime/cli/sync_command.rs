@@ -10,6 +10,7 @@ pub(crate) struct SyncCommand;
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     frozen: bool,
+    check: bool,
     project: Option<PathBuf>,
     help: bool,
 }
@@ -29,6 +30,7 @@ impl SyncCommand {
             Global::exit(0);
         }
         let frozen = options.frozen;
+        let check = options.check;
         let project = match options.project {
             Some(path) => path,
             None => std::env::current_dir().unwrap_or_else(|error| {
@@ -48,7 +50,8 @@ impl SyncCommand {
             Output::flush();
             Global::exit(1);
         });
-        let options = poly_uv::SyncOptions::new(project, executable);
+        let mut options = poly_uv::SyncOptions::new(project, executable);
+        options.smoke_check = check;
         let report = if frozen {
             poly_uv::sync_frozen(&options)
         } else {
@@ -68,6 +71,61 @@ impl SyncCommand {
             report.downloaded,
             report.cache_hits,
         );
+        if report.compatibility.smoke_checked {
+            let import_count = report.compatibility.import_count();
+            let compatible = report
+                .compatibility
+                .count(poly_uv::CompatibilityStatus::SmokeCompatible);
+            let unverified = report
+                .compatibility
+                .count(poly_uv::CompatibilityStatus::Unverified);
+            bun_core::prettyln!(
+                "<green>Checked<r> {} Python import{} across {} package{} <d>({} compatible, {} unverified)<r>",
+                import_count,
+                if import_count == 1 { "" } else { "s" },
+                report.compatibility.packages.len(),
+                if report.compatibility.packages.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                compatible,
+                unverified,
+            );
+        } else {
+            let compatible = report
+                .compatibility
+                .count(poly_uv::CompatibilityStatus::StaticCompatible);
+            let unverified = report
+                .compatibility
+                .count(poly_uv::CompatibilityStatus::Unverified);
+            bun_core::prettyln!(
+                "<green>Scanned<r> {} Python package{} for RustPython compatibility <d>({} compatible, {} unverified)<r>",
+                report.compatibility.packages.len(),
+                if report.compatibility.packages.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                compatible,
+                unverified,
+            );
+        }
+        for package in &report.compatibility.packages {
+            if package.status != poly_uv::CompatibilityStatus::Unverified {
+                continue;
+            }
+            for diagnostic in &package.diagnostics {
+                if diagnostic.kind == poly_uv::CompatibilityDiagnosticKind::NoImportTargets {
+                    bun_core::pretty_errorln!(
+                        "<yellow>warn<r><d>:<r> {}=={}: {}",
+                        package.name,
+                        package.version,
+                        diagnostic.message,
+                    );
+                }
+            }
+        }
         for warning in report.warnings {
             bun_core::pretty_errorln!("<yellow>warn<r><d>:<r> {}", warning);
         }
@@ -79,6 +137,7 @@ impl SyncCommand {
 fn parse_args(args: &[&[u8]]) -> Result<Options, String> {
     let mut options = Options {
         frozen: false,
+        check: false,
         project: None,
         help: false,
     };
@@ -87,6 +146,7 @@ fn parse_args(args: &[&[u8]]) -> Result<Options, String> {
         let argument = args[index];
         match argument {
             b"--frozen" => options.frozen = true,
+            b"--check" => options.check = true,
             b"-h" | b"--help" => options.help = true,
             b"--project" => {
                 index += 1;
@@ -131,15 +191,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_frozen_project() {
+    fn parses_frozen_checked_project() {
         assert_eq!(
             parse_args(&[
                 b"--frozen".as_slice(),
+                b"--check".as_slice(),
                 b"--project".as_slice(),
                 b"example".as_slice(),
             ]),
             Ok(Options {
                 frozen: true,
+                check: true,
                 project: Some(PathBuf::from("example")),
                 help: false,
             })

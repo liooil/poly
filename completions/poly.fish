@@ -188,7 +188,7 @@ complete -c poly -n "__fish_use_subcommand" -a "publish" -d "Publish your packag
 complete -c poly -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency from package.json" -f
 complete -c poly -n "__fish_use_subcommand" -a "repl" -d "Start a Poly REPL session" -f
 complete -c poly -n "__fish_use_subcommand" -a "run" -d "Run JavaScript, a package.json script, or a package binary" -f
-complete -c poly -n "__fish_use_subcommand" -a "sync" -d "Install Python dependencies from uv.lock" -f
+complete -c poly -n "__fish_use_subcommand" -a "sync" -d "Resolve and install Python dependencies" -f
 complete -c poly -n "__fish_use_subcommand" -a "test" -d "Run unit tests" -f
 complete -c poly -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local npm package" -f
 complete -c poly -n "__fish_use_subcommand" -a "update" -d "Update dependencies and package.json" -f
@@ -247,5 +247,6 @@ complete -c poly -n "__fish_seen_subcommand_from repl" -l "cwd" -r -d "Absolute 
 complete -c poly -n "__fish_seen_subcommand_from repl" -l "env-file" -r -d "Load environment variables from the specified file(s)"
 complete -c poly -n "__fish_seen_subcommand_from repl" -l "no-env-file" -d "Disable automatic loading of .env files" -f
 complete -c poly -n "__fish_seen_subcommand_from sync" -l "frozen" -d "Require and consume the existing uv.lock" -f
+complete -c poly -n "__fish_seen_subcommand_from sync" -l "check" -d "Import installed modules with RustPython before commit" -f
 complete -c poly -n "__fish_seen_subcommand_from sync" -l "project" -r -F -d "Discover the Python project from this directory"
 complete -c poly -n "__fish_seen_subcommand_from sync" -s "h" -l "help" -d "Display help and exit" -f

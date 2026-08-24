@@ -60,6 +60,7 @@ poly run app.ts        # run a TypeScript entry point
 poly run tool.py       # run a Python entry point
 poly repl python       # start directly in Python REPL mode
 poly sync              # resolve, lock, and install Python dependencies
+poly sync --check      # also smoke-import installed modules with RustPython
 poly sync --frozen     # install strictly from an existing uv.lock
 poly build app.ts      # produce a standalone application
 ```
@@ -104,7 +105,10 @@ my-app/
 Poly owns the compatibility boundary. In particular, uv is used for dependency
 resolution and materialization, but RustPython is not an officially supported uv
 interpreter and cannot load arbitrary CPython native wheels. Poly therefore
-needs its own compatibility checks and reports.
+scans every staged wheel for unsupported artifacts before commit. Pass
+`poly sync --check` to additionally import its source modules in a fresh
+RustPython VM. This explicit check executes package top-level code and is not a
+security sandbox.
 
 ## How it fits together
 
@@ -147,6 +151,8 @@ tagged values, and explicit lifetime semantics.
 | Cooperative async execution | Planned |
 | `poly sync --frozen` for generic pure wheels | Implemented |
 | `poly sync` resolver-driven lock generation | Implemented |
+| Static staged-wheel compatibility reports | Implemented |
+| `poly sync --check` RustPython smoke imports | Implemented |
 | `poly build` standalone applications | Planned |
 
 See the [validation record](poly/docs/validation.md) for the exact verified

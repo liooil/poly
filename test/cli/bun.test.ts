@@ -144,11 +144,12 @@ describe("bun", () => {
       expect(xHelp).not.toContain("Usage: bun x");
     });
 
-    test("sync help documents resolution and frozen mode", async () => {
+    test("sync help documents resolution and validation modes", async () => {
       const syncHelp = await runHelp(["sync", "--help"]);
 
       expect(syncHelp).toContain("Usage: poly sync [options]");
       expect(syncHelp).toContain("--project <path>");
+      expect(syncHelp).toContain("--check");
       expect(syncHelp).toContain("update uv.lock");
       expect(syncHelp).not.toContain("Usage: bun sync");
     });
@@ -208,6 +209,26 @@ describe("bun", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stdout).toContain("Synced 0 Python packages");
+      expect(stdout).toContain("Scanned 0 Python packages for RustPython compatibility");
+      expect(stderr).toBe("");
+      expect(await Bun.file(`${dir}/uv.lock`).text()).toContain('requires-python = ">=3.12"');
+      expect(exitCode).toBe(0);
+    });
+
+    test("--check reports staged smoke-import validation", async () => {
+      using dir = tempDir("poly-sync-check", {
+        "pyproject.toml": `[project]\nname = "checked-project"\nversion = "1.0.0"\nrequires-python = ">=3.12"\ndependencies = []\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sync", "--check", "--project", String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("Synced 0 Python packages");
+      expect(stdout).toContain("Checked 0 Python imports across 0 packages");
       expect(stderr).toBe("");
       expect(await Bun.file(`${dir}/uv.lock`).text()).toContain('requires-python = ">=3.12"');
       expect(exitCode).toBe(0);
@@ -606,6 +627,7 @@ describe("bun", () => {
         "package.json": JSON.stringify({ name: "completion-test" }),
       });
       const completionPath = await writeCompletionScript("bash", String(dir));
+      expect(fs.readFileSync(completionPath, "utf8")).toContain("--frozen --check --project");
       const driver = [
         'poly() { "$POLY_EXE" "$@"; }',
         'source "$COMPLETION_SCRIPT"',
@@ -652,6 +674,7 @@ describe("bun", () => {
         "package.json": JSON.stringify({ name: "completion-test" }),
       });
       const completionPath = await writeCompletionScript("zsh", String(dir));
+      expect(fs.readFileSync(completionPath, "utf8")).toContain("--check[Import installed modules with RustPython");
       const driver = [
         "autoload -Uz compinit",
         "compinit -D",
@@ -710,6 +733,7 @@ describe("bun", () => {
         "package.json": JSON.stringify({ name: "completion-test" }),
       });
       const completionPath = await writeCompletionScript("fish", String(dir));
+      expect(fs.readFileSync(completionPath, "utf8")).toContain('-l "check"');
       const driver = [
         "function poly",
         '  "$POLY_EXE" $argv',

@@ -9,11 +9,16 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use uv_workspace::{DiscoveryOptions, Workspace, WorkspaceCache};
 
+mod compatibility;
 mod lock;
 mod resolve;
 mod stage;
 mod sync;
 
+pub use compatibility::{
+    CompatibilityDiagnostic, CompatibilityDiagnosticKind, CompatibilityReport, CompatibilityStatus,
+    PackageCompatibility,
+};
 pub use lock::{InstallPlan, LockedPackage, plan_lock, plan_lock_contents};
 pub use stage::{stage_locked_wheel, stage_wheel_archive};
 pub use sync::{SyncOptions, SyncReport, sync, sync_frozen};
@@ -115,6 +120,10 @@ pub enum Error {
     },
     #[error("failed to access wheel or staging files: {0}")]
     Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Compatibility(CompatibilityReport),
+    #[error("failed to run the RustPython compatibility check: {0}")]
+    CompatibilityRuntime(#[from] poly_python::PythonError),
     #[error(transparent)]
     ExtractWheel(#[from] uv_extract::Error),
     #[error(transparent)]
@@ -145,6 +154,15 @@ pub enum Error {
         commit: String,
         rollback: String,
         backup: PathBuf,
+    },
+    #[error(
+        "failed to finish the Python environment transaction at `{target}` ({commit}); restoring the previous state also failed ({rollback}); recovery data remains at `{recovery}`"
+    )]
+    TransactionRollback {
+        target: PathBuf,
+        commit: String,
+        rollback: String,
+        recovery: PathBuf,
     },
 }
 

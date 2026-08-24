@@ -202,7 +202,7 @@ _poly_completions() {
             COMPREPLY=( $(compgen -W "js python py shell sh sql c --help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         sync)
-            _long_short_completion "--frozen --project --help -h" "-h";
+            _long_short_completion "--frozen --check --project --help -h" "-h";
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
