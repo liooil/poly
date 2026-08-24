@@ -227,6 +227,25 @@ describe("bun", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("supports standard Python imports for JS modules", async () => {
+      using dir = tempDir("poly-python-direct-js-import", {
+        "main.py": "from app_numbers import double\nprint(double(21))\n",
+        "app_numbers.ts": "export const double = (value: number) => value * 2;\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "main.py"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("42\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("sync", () => {

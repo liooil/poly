@@ -5,8 +5,8 @@
 实现一个同进程、同线程的双向同步互操作版本：
 
 - TypeScript/JavaScript 可直接静态或动态导入 `.py`。
-- Python 可通过 `js.import_module()` 自动使用 Bun resolver 加载任意 JS/TS 模块。
-- `poly app.py` 也先启动 Bun/JSC，因此 Python 入口具备同样的 JS 导入能力。
+- Python 可通过 `js.import_module()` 使用 Bun resolver 加载 JS/TS 模块。
+- `poly app.py` 通过当前 Poly bridge 获得同进程的 JS 导入能力。
 - v1 只传递 JSON 兼容值和同步 callable；不引入 subprocess、RPC、Promise/coroutine 或跨 GC 对象句柄。
 
 ## Public APIs and semantics
@@ -27,19 +27,24 @@
   python.call("./math.py", "add", [20, 22]); // 同步返回
   ```
 
-- Python 自动加载 JS：
+- Python 标准 `import` 是 JS/TS 导入的首选，不需要 `js.` 前缀：
+
+  ```py
+  from some_package.tools import run
+  # Python 无法解析时，Poly 将 "some_package/tools" 交给 Bun resolver
+  ```
+
+  Python 自身的 builtin、标准库、本地模块和已安装包优先；Bun resolver 仅作为
+  Python import machinery 的 fallback。
+
+- `js.import_module(specifier)` 是动态或路径型导入的备选，支持相对路径、绝对路径、包名和 Bun 内建 specifier：
 
   ```py
   import js
 
   math = js.import_module("./math.ts")  # 相对当前 Python 文件解析
   result = math.add(20, 22)
-
-  from js.some_package.tools import run
-  # js.some_package.tools -> Bun bare specifier "some_package/tools"
   ```
-
-  `js.import_module(specifier)` 支持相对路径、绝对路径、包名和 Bun 内建 specifier；`js.x.y` 是 bare specifier `x/y` 的语法糖。
 
 - Python 导出优先使用 `__all__`，否则考虑所有非 `_` 开头的顶层名称。callable 变成同步 JS 函数，JSON 值成为导入时快照。`__all__` 中的不支持值导致导入失败；自动发现时不支持的公开对象不导出。
 
@@ -47,15 +52,15 @@
 
 ## Implementation changes
 
-- 在 `poly_python` 中把当前每次 `runpy.run_path` 重做为持久模块注册表：按规范化绝对路径加载一次、写入 `sys.modules`、保留模块状态，并提供版本化的 `load/describe/call/run_file` 请求协议。
-- 嵌入原生 `js` package、meta-path finder 和 `import_module()`。Python→JS 通过一次调用期间安装的线程局部 host callback 回到当前 JSC global；没有 JSC 上下文时明确报错。
-- 在 Bun ESM fetch/transpile 路径中先于未知扩展处理 `.py`：加载并描述 Python 模块，生成只包含静态 named exports、JSON 常量及 callable wrapper 的 ESM source。Python 顶层代码只执行一次，stdout 在模块初始化时转发一次，异常以完整 traceback 拒绝导入。
+- `poly_python` 使用持久 bridge registry，按规范化绝对路径复用已加载状态。当前文档不把 bridge registry 与 Python `sys.modules` 的统一 module identity 视为已验证事实；该边界由独立 conformance 测试确认。
+- 嵌入原生 `js` package、无前缀 meta-path fallback finder 和 `import_module()`。Python 正常 import resolver 优先；仅在其无法解析时才调用 Bun resolver。Python→JS 通过线程局部 host callback 回到当前 JSC global；没有 JSC 上下文时明确报错。
+- 在 Bun ESM fetch/transpile 路径中先于未知扩展处理 `.py`：加载并描述 Python 模块，生成只包含静态 named exports、JSON 常量及 callable wrapper 的 ESM source。已加载模块通过 bridge registry 按规范化路径复用；TS loader 与 Python `sys.modules` 的跨边界 identity 仍需 conformance 验证。
 - 新建 VM 所有的 `PolyInteropState`，用 JSC `Strong` 根保存 Python 已加载的 JS module namespace；销毁跟随 VM 且发生在 JS 线程。JS 调用通过现有 `JSValue::call`，参数和结果在边界处 JSON 转换。
 - Python→JS 模块加载走 Bun 现有同步 resolver/require 路径，并以发起导入的 Python 文件作为 referrer；沿用 Bun 当前 package、alias、builtin 和 auto-install 配置。包含 top-level await 或返回 Promise 的模块/函数在同步 v1 中明确拒绝。
 - 用状态机限制嵌套调用：允许 `JS → Python → JS`；当 JS callback 再次进入 Python 时抛出 `ERR_POLY_REENTRANT_PYTHON_CALL`，防止循环依赖破坏 RustPython/JSC 状态。
-- 移除 `bun_bin` 在 JSC 启动前直接运行 `.py` 的早期分派。在 RunCommand 中把 Python 入口改写为内部虚拟 bootstrap 模块，在完整 Bun 生命周期和 API lock 内调用 `run_file`，同时保持 `sys.argv`、退出码和脚本参数兼容。
+- Python 入口沿用当前 Poly 的入口路由，并通过 bridge 提供 JS 导入能力；`sys.argv`、退出码和脚本参数保持脚本语义。入口路由与完整 Bun 生命周期的跨平台 conformance 仍单独验证。
 - 错误映射固定为：Python import/call 错误在 JS 侧包含稳定错误码和 traceback；JS 异常在 Python 侧成为 `js.JavaScriptError`，保留 JS name、message、stack；Python coroutine、JS Promise 和跨运行时循环重入分别使用独立错误码。
-- 更新 README、技术设计、路线图和验证记录，明确同步 v1、缓存语义、值域限制及尚未实现的能力。
+- 文档、路线图和验证记录应以当前实现边界为准；未由集成测试证明的跨边界 identity 不标记为完成。
 
 ## Test plan
 
@@ -64,6 +69,7 @@
   - `.py` 静态导入及可选 import attribute；
   - callable、常量、默认/缺失 export、动态 `import()`；
   - 两次导入共享 Python 模块状态；
+  - Python 标准无前缀 `import <module>` 与 `from <module> import <name>`；
   - Python 异常映射到 JS；
   - `poly app.py` 导入相对 TS 文件；
   - `js.import_module()` 加载 bare package、Bun builtin 和缓存模块；
@@ -80,4 +86,3 @@
 - `require("./x.py")` 不纳入 v1；`.py` 使用 ESM `import`/`import()`。
 - `Bun.build`、`poly build` 和把 Python 模块收入 standalone archive 属于后续 bundle 阶段。
 - Python 模块缓存持续到进程结束；v1 不提供 reload API。
-- 实施前从干净 `main` 创建符合仓库规则的 `claude/poly-language-interop` 分支，并保留所有非 Poly 的 Bun loader 行为不变。

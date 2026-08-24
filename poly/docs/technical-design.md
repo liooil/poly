@@ -42,7 +42,9 @@ poly executable
 +-- RustPython frozen stdlib
 ```
 
-直接执行 `.py` 时，`bun_bin` 在进入 Bun CLI 分派前把文件交给 RustPython。执行 JS/TS 时走 Bun 原本路径。
+`.py` entries use the current Poly routing path and execute with RustPython;
+`.js`/`.ts` entries use the Bun CLI and runtime. Cross-language module loading
+uses the persistent bridge VM; standalone file execution remains script-scoped.
 
 ## 4. 同进程 interop
 
@@ -61,19 +63,20 @@ Bun.polyPythonCall(string) -> string
 
 ### 4.2 Python VM
 
-`poly_python::call_json` 在当前 Bun/JSC runtime 线程上惰性创建并复用 thread-local RustPython VM。没有 worker、channel 或跨线程值搬运。Bun 的 Windows 主线程链接栈已经设为 `0x1200000`（18 MiB），足以避开 RustPython 在普通小栈测试线程上的初始化溢出；crate 测试会显式创建 16 MiB 测试线程，但 Python 调用仍发生在该调用者线程本身。
-
-每次调用：
+每次 bridge 请求：
 
 1. JSC host function 在当前 runtime 线程调用 Rust bridge；
-2. bridge 校验并规范化模块路径；
-3. 把请求字符串写入 Python scope；
-4. 通过 `runpy.run_path` 加载模块；
+2. bridge 规范化模块路径；
+3. persistent module registry 先查询已加载状态；
+4. 首次加载时在持久 RustPython VM 中执行模块并保存状态；
 5. 调用指定同步函数；
 6. 捕获 Python stdout 与 traceback；
-7. 直接向同一 JSC 调用栈返回 JSON response。
+7. 向同一 JSC 调用栈返回 JSON response。
 
-当前每次会重新执行目标 `.py` 文件。模块缓存和显式 reload 语义留到 M1。
+bridge 当前按规范化路径复用自己的模块 registry。Python 标准
+`sys.modules` 与 bridge registry 是否已经在所有 TS/Python 导入路径中共享
+同一个 module identity，仍由跨边界 conformance 测试确认。reload API 不属于
+当前 v1。
 
 ### 4.3 类型与错误
 

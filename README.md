@@ -2,281 +2,164 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-**One runtime for TypeScript and Python.**
-
-Run either language. Import across both ecosystems. Ship one executable.
+Run TypeScript and Python in one executable, and import between them.
 
 [![CI](https://github.com/liooil/poly/actions/workflows/ci.yml/badge.svg)](https://github.com/liooil/poly/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Poly is an experimental runtime and toolchain for applications that use both
-TypeScript and Python. Bun runs JavaScript and TypeScript, RustPython runs
-Python, and a Rust host brings them together in one executable and one OS
-process.
+## Start with one file
 
-The goal is not to hide one language behind an RPC service. Both languages
-should be first-class parts of the same project, module graph, development
-workflow, and release artifact.
-
-> [!IMPORTANT]
-> Poly is still an engineering prototype. The shared runtime and low-level
-> in-process bridge exist today; cross-language imports, unified dependency
-> management, and application bundling are roadmap features.
-
-## Derived from Bun
-
-Poly is a fork of [Bun](https://bun.sh) — the JavaScript/TypeScript runtime and
-toolkit (originally `oven-sh/bun`). Bun's source tree and full history are part
-of this repository: JavaScriptCore, the npm-compatible package manager, the
-bundler, the test runner, and Bun Shell all come from Bun, with a Rust host and
-an embedded RustPython interpreter layered on top.
-
-The fork was established from Bun commit
-[`e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7`](https://github.com/oven-sh/bun/commit/e7ddfeb19e8bc714f6137aa2b1cd5a7bb56b93d7)
-and tracks later upstream changes through explicit merge commits (see
-[Sync Bun upstream](#sync-bun-upstream)). Poly keeps Bun's MIT license.
-
-## The target experience
-
-Python files should behave like modules, not services:
+No project setup is required.
 
 ```ts
-import { add } from "./math_tools.py" with { type: "python" };
+// hello.ts
+console.log("hello from TypeScript");
+```
+
+```bash
+poly hello.ts
+```
+
+Python works the same way:
+
+```python
+# hello.py
+print("hello from Python")
+```
+
+```bash
+poly hello.py
+```
+
+`package.json`, `pyproject.toml`, `poly.toml`, and lockfiles are optional. Add
+them only when the project needs dependencies, locking, or Poly-specific
+settings.
+
+## Import Python from TypeScript
+
+```python
+# math_tools.py
+
+def add(a, b):
+    return a + b
+```
+
+```ts
+// main.ts
+import { add } from "./math_tools.py";
 
 console.log(add(20, 22)); // 42
 ```
 
-Poly will also provide a built-in runtime module for cases that need explicit
-access to Python:
+The `.py` module is loaded in-process. Calls are synchronous and return JSON-
+compatible values or synchronous callable proxies.
+
+For an explicit bridge call:
 
 ```ts
 import { python } from "poly";
+
+console.log(python.call("./math_tools.py", "add", [20, 22]));
 ```
 
-The common project lifecycle should use one CLI:
+## Import TypeScript from Python
 
-```text
-poly run app.ts        # run a TypeScript entry point
-poly run tool.py       # run a Python entry point
-poly repl python       # start directly in Python REPL mode
-poly sync              # resolve, lock, and install Python dependencies
-poly sync --check      # also smoke-import installed modules with RustPython
-poly sync --frozen     # install strictly from an existing uv.lock
-poly build app.ts      # produce a standalone application
+```ts
+// app_numbers.ts
+export function double(value: number) {
+  return value * 2;
+}
 ```
 
-`poly run` entry-point routing, the multi-language REPL, and in-process Python
-dependency resolution and materialization are part of the current prototype.
-`poly build` is not implemented yet.
+```python
+# main.py
+from app_numbers import double
 
-REPL history is shared across languages. Recalling an entry from another mode
-shows it as an inline command such as `.py value = 42`, so it runs in the
-language where it was originally entered.
+print(double(21))  # 42
+```
 
-Interactive input uses language-specific syntax highlighting in JavaScript,
-Python, Shell, SQL, and C modes, including each language's strings, comments,
-numeric literals, keywords, and constructs such as expansions or preprocessors.
+Python's standard `import` is preferred. Normal Python modules win; when Python
+cannot resolve a module, Poly falls back to Bun's resolver. `js.import_module()`
+is the fallback for relative, absolute, or runtime-computed specifiers:
 
-## One project, two ecosystems
+```python
+import js
 
-A Poly project is designed to keep the native tools and metadata of both
-ecosystems:
+numbers = js.import_module("./app_numbers.ts")
+print(numbers.double(21))  # 42
+```
+
+## Grow into a project
+
+Start with source files, then add native metadata as needed:
 
 ```text
 my-app/
-├── package.json       # JavaScript and TypeScript dependencies
-├── bun.lock
-├── pyproject.toml     # Python dependencies
-├── uv.lock
-├── poly.toml          # entries, runtimes, and interop settings
-└── src/
-    ├── main.ts
-    └── model.py
+├── main.ts
+├── math_tools.py
+├── package.json       # when JavaScript dependencies are needed
+├── pyproject.toml     # when Python dependencies are needed
+├── bun.lock           # optional Bun lockfile
+├── uv.lock            # optional Python lockfile
+└── poly.toml          # optional Poly settings
 ```
 
-| Layer | Direction |
-|---|---|
-| Runtime | Bun and embedded RustPython in one executable |
-| Modules | Direct imports across TypeScript and Python |
-| Dependencies | Bun for npm packages, uv for Python resolution and locking |
-| Build | Collect both module graphs, dependencies, and resources |
-| Distribution | One platform-native executable with no Python sidecar |
-
-Poly owns the compatibility boundary. In particular, uv is used for dependency
-resolution and materialization, but RustPython is not an officially supported uv
-interpreter and cannot load arbitrary CPython native wheels. Poly therefore
-scans every staged wheel for unsupported artifacts before commit. Pass
-`poly sync --check` to additionally import its source modules in a fresh
-RustPython VM. This explicit check executes package top-level code and is not a
-security sandbox.
-
-## How it fits together
-
-The current M0 prototype integrates RustPython directly into a pinned Bun source
-tree:
-
-```text
-poly executable
-│
-├── Bun / JavaScriptCore
-│   ├── JavaScript and TypeScript entry points
-│   └── Bun.polyPythonCall()
-│
-├── Rust host bridge
-│   └── JSON value and error envelope
-│
-└── RustPython
-    ├── Python entry points
-    └── frozen Python standard library
-```
-
-The current TypeScript-to-Python call path stays on the Bun/JSC caller thread.
-It does not start a subprocess, sidecar, worker thread, socket, or stdio RPC
-channel. Python execution is synchronous and blocks the Bun event loop.
-
-This JSON bridge is a bootstrap layer. It proves that both runtimes can coexist
-inside the same process while keeping their garbage-collected objects separate.
-The roadmap replaces this low-level interface with imports, callable proxies,
-tagged values, and explicit lifetime semantics.
-
-## Project status
-
-| Capability | Status |
-|---|---|
-| Bun and RustPython source integration | Implemented |
-| `.js` / `.ts` and `.py` entry-point routing | Validated in a Windows Release build |
-| TypeScript → Python JSON bridge | Validated through the linked JSC and RustPython runtimes |
-| Python module cache and reload semantics | Planned |
-| Static cross-language imports and callable proxies | Planned |
-| Cooperative async execution | Planned |
-| `poly sync --frozen` for generic pure wheels | Implemented |
-| `poly sync` resolver-driven lock generation | Implemented |
-| Static staged-wheel compatibility reports | Implemented |
-| `poly sync --check` RustPython smoke imports | Implemented |
-| `poly build` standalone applications | Planned |
-Single `.ts` or `.py` files run without `package.json`, `pyproject.toml`, `poly.toml`, or lockfiles. `poly sync` enters uv resolution and staging only after Python dependencies are declared.
-
-See the [validation record](poly/docs/validation.md) for the exact verified
-boundary and the [roadmap](poly/docs/roadmap.md) for planned work.
-
-## Try the current prototype
-
-### Validate the RustPython bridge
-
-This is the fastest check and does not compile Bun:
-
-```powershell
-cargo test -p poly_python
-```
-
-It initializes RustPython on one caller thread, invokes
-`poly/examples/math_tools.py::add(20, 22)`, verifies the return value, and
-checks stdout capture. It does not produce the final `poly` executable.
-
-### Build the complete runtime
-
-A full build compiles the checked-out fork directly. The repository already
-contains Bun's source and history; the build does not clone another Bun
-worktree or apply a downstream patch. Expect roughly 10 GB of disk usage and a
-10–30 minute build.
-
-Prerequisites include Git, PowerShell 7, Bun 1.3.2, Rust, and Bun's native build
-toolchain. See the
-[Bun integration workflow](.github/workflows/bun-integration.yml) for the
-complete Windows and Linux environments.
-
-Poly is derived from Bun — see [Derived from Bun](#derived-from-bun) for the
-fork origin and upstream tracking policy.
-
-#### Windows
-
-```powershell
-.\poly\scripts\build.ps1 -Configuration Release
-.\dist\poly.exe poly\examples\python_main.py -- first second
-.\dist\poly.exe poly\examples\main.ts
-```
-
-#### Linux
+Python dependencies use the in-process uv integration:
 
 ```bash
-pwsh ./poly/scripts/build.ps1 -Configuration Release
-./dist/poly poly/examples/python_main.py -- first second
-./dist/poly poly/examples/main.ts
+poly sync
+poly sync --check
+poly sync --frozen
 ```
 
-Omitting `-Configuration Release` produces a Debug build.
+Without `pyproject.toml`, `poly sync` reports that there is no Python project
+and changes nothing. `poly init` is not required.
 
-The TypeScript example currently uses the transitional low-level SDK in
-[`poly/examples/main.ts`](poly/examples/main.ts). It is an integration fixture,
-not the intended final developer experience.
-
-## Repository layout
-
-```text
-src/                           Bun runtime plus the in-tree Poly integration
-src/poly_python/               RustPython embedding and call bridge
-poly/scripts/build.ps1         Direct fork build entry point
-poly/sdk/                      Transitional low-level TypeScript SDK
-poly/examples/                 TypeScript and Python integration examples
-poly/docs/                     Design, roadmap, and validation records
-poly/poly.toml                 Future Poly project manifest
-```
-
-## Sync Bun upstream
-
-Clones of this repository can configure Bun as the upstream remote and merge it
-normally:
+## REPL
 
 ```bash
-git remote add upstream https://github.com/oven-sh/bun.git
-git fetch upstream
-git merge upstream/main
+poly repl
+poly repl python
+poly repl shell
+poly repl sql
+poly repl c
 ```
 
-The first unrelated-history merge is already part of `main`; future syncs do
-not use `--allow-unrelated-histories` and do not regenerate a Poly patch.
+The REPL keeps shared history and provides language-specific syntax highlighting.
 
-## Documentation
+## Current boundary
 
-- [Technical design](poly/docs/technical-design.md)
-- [Implementation roadmap](poly/docs/roadmap.md)
-- [Validation record](poly/docs/validation.md)
-- [Reproducible build and binary release plan](poly/docs/release-build.md)
+Implemented:
 
-The linked design documents are currently written in Chinese.
+- `.ts` / `.py` entry points in one Poly executable;
+- synchronous TS↔Python imports and callable proxies;
+- JSON-compatible bridge values;
+- normalized-path caching in the Poly bridge registry;
+- in-process uv resolution, wheel staging, compatibility scanning, and optional
+  RustPython smoke imports;
+- zero-config single-file execution.
 
-## Website
+Not yet implemented or fully verified:
 
-The project website is published at
-[liooil.github.io/poly](https://liooil.github.io/poly/). Its source lives in
-[`poly/website/`](poly/website/), and changes on `main` are deployed through the
-[GitHub Pages workflow](.github/workflows/pages.yml).
+- reload API;
+- one shared module identity between every bridge path and Python `sys.modules`;
+- Promise/coroutine scheduling, cancellation, and timeout;
+- bytes, BigInt, non-finite numbers, and general cross-runtime object identity;
+- `poly build` standalone applications.
 
-## Continuous integration and releases
+## Build and test
 
-- `CI` runs the RustPython bridge tests on Linux, macOS, and Windows. It also
-  checks formatting, Clippy, the TypeScript fixture, the no-subprocess boundary,
-  and direct source integration.
-- `Bun integration build` builds Windows x64 and Linux x64 executables for
-  relevant pull requests or manual runs, then exercises both language entry
-  points and the TypeScript-to-Python path.
-- `Release` accepts only `v*` tags and publishes assets only after both platform
-  builds and smoke tests succeed.
+```bash
+cargo test --locked -p poly_python
+cargo check --locked -p bun_runtime --tests
+bun bd test test/cli/bun.test.ts
+```
 
-## License
+The repository contains the Bun fork and Poly integration. See:
 
-Code original to this project is available under the [MIT License](LICENSE).
-The final `poly` executable also contains Bun, JavaScriptCore/WebKit,
-RustPython, and other third-party components under their respective licenses.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the preliminary
-inventory and release requirements.
+- [`poly/docs/language-interop-v1.md`](poly/docs/language-interop-v1.md)
+- [`poly/docs/technical-design.md`](poly/docs/technical-design.md)
+- [`poly/docs/roadmap.md`](poly/docs/roadmap.md)
+- [`poly/docs/validation.md`](poly/docs/validation.md)
 
-Tagged releases are intended to be built by GitHub Actions and distributed as
-GitHub Release assets with build metadata and checksums.
-
-## Upstream references
-
-- [Bun main Rust workspace](https://github.com/oven-sh/bun/blob/main/Cargo.toml)
-- [Building Bun from source](https://github.com/oven-sh/bun/blob/main/CONTRIBUTING.md)
-- [RustPython 0.5.0 embedding API](https://docs.rs/rustpython/0.5.0/rustpython/)
-- [Python implementations supported by uv](https://docs.astral.sh/uv/reference/policies/python/)
+Poly is derived from [Bun](https://bun.sh) and uses Bun's MIT license.

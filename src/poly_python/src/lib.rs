@@ -25,10 +25,10 @@
 ///
 /// ## Python `js` package
 ///
-/// An embedded Python `js` package provides `import_module()` which routes
-/// the specifier to Bun's resolver through a thread-local host callback. The
-/// callback is installed by `bun_runtime` during JSC VM init and unset on
-/// shutdown.
+/// Standard imports such as `from some_package.tools import run` are the
+/// preferred path. Python's normal resolver runs first; Bun is the fallback.
+/// `import_module()` remains available for relative, absolute, or
+/// runtime-computed specifiers through the same host callback.
 ///
 /// ## Reentrancy Guard
 ///
@@ -247,11 +247,12 @@ impl ModuleRegistry {
 // Python `js` package source
 // ---------------------------------------------------------------------------
 
-/// Embedded Python source for the `js` package that provides
-/// `import_module()` and the `js.x.y` dotted access.
+/// Embedded Python import fallback plus the `js.import_module()` helper for
+/// path-based and runtime-computed specifiers.
 const JS_PACKAGE_SOURCE: &str = r#"
 import sys
 import json
+import importlib.machinery
 
 class _JSVariable:
     """A live proxy for a JavaScript global, identified by its name. Calls
@@ -345,6 +346,7 @@ class _ModuleWrapper:
         values = exports.get('values', {}) if isinstance(exports, dict) else {}
         functions = exports.get('functions', []) if isinstance(exports, dict) else []
         self._exports = values
+        self._functions = functions
         # Names from the module become direct attributes
         for name, value in values.items():
             if value is not None:
@@ -361,18 +363,48 @@ class _ModuleWrapper:
         raise AttributeError(f"module has no attribute {name!r}")
 
 
+class _JSModuleLoader:
+    def __init__(self, referrer):
+        self._referrer = referrer
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        specifier = module.__name__.replace('.', '/')
+        wrapper = js.import_module(specifier, self._referrer)
+        for name, value in wrapper._exports.items():
+            setattr(module, name, value)
+        for name in wrapper._functions:
+            setattr(module, name, getattr(wrapper, name))
+
+
+class _JSModuleFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'js':
+            return None
+        caller = sys._getframe(1)
+        referrer = caller.f_globals.get('__file__', '')
+        return importlib.machinery.ModuleSpec(
+            fullname,
+            _JSModuleLoader(referrer),
+            is_package=True,
+        )
+
+
+# Preserve Python's normal builtin, stdlib, local, and installed-package
+# resolution. Bun is the fallback when Python cannot resolve the module.
+sys.meta_path.append(_JSModuleFinder())
+
+
 class _JSRoot:
     """Root 'js' module object used for 'js.pkg.name' dotted access."""
-
-    def __init__(self):
-        self._cache = {}
-
-    def import_module(self, specifier):
+    def import_module(self, specifier, referrer_override=None):
         _check_host()
         # Relative specifiers are resolved relative to the caller's file.
         caller_frame = sys._getframe(1)
         caller_file = caller_frame.f_globals.get('__file__', None)
-        referrer = caller_file if caller_file else ''
+        referrer = referrer_override or (caller_file if caller_file else '')
         request = json.dumps({
             'kind': 'import_js',
             'module': specifier,
@@ -1994,6 +2026,54 @@ mod tests {
             .unwrap()
             .join()
             .unwrap()
+    }
+
+    fn direct_import_host(request: &str) -> Result<String, String> {
+        let request: Value = serde_json::from_str(request).map_err(|error| error.to_string())?;
+        match request.get("kind").and_then(Value::as_str) {
+            Some("import_js") => Ok(serde_json::json!({
+                "ok": true,
+                "exports": { "values": {}, "functions": ["double"] }
+            })
+            .to_string()),
+            Some("call_js") => {
+                let value = request
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .and_then(|args| args.first())
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| "missing numeric argument".to_owned())?;
+                Ok(serde_json::json!({ "ok": true, "value": value * 2 }).to_string())
+            }
+            other => Err(format!("unexpected host request: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn standard_import_falls_back_to_bun_modules_without_js_prefix() {
+        run_with_big_stack(|| {
+            set_host_callback(direct_import_host);
+            let response = repl_eval(
+                "from app_numbers import double\nresult = double(21)\nresult",
+                &[],
+            )
+            .expect("evaluate direct JS import");
+            clear_host_callback();
+
+            let response: Value = serde_json::from_str(&response).expect("parse REPL response");
+            let result = response
+                .get("exports")
+                .and_then(Value::as_array)
+                .and_then(|exports| {
+                    exports
+                        .iter()
+                        .find(|export| export.get("name").and_then(Value::as_str) == Some("result"))
+                })
+                .and_then(|export| export.get("value"))
+                .and_then(Value::as_i64);
+            assert_eq!(result, Some(42), "unexpected REPL response: {response}");
+            assert_eq!(response.get("error"), Some(&Value::Null));
+        });
     }
 
     /// Helper: load then call a function in a fixture module on one

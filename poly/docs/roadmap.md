@@ -21,7 +21,9 @@
 
 - [ ] `poly init`（便利性脚手架，非项目运行前置条件）
 - [x] 无需 `poly.toml` 的零配置入口运行与渐进式元数据发现
-- [ ] Python module cache 与 reload 语义
+- [x] Poly bridge 的规范化路径缓存与状态复用
+- [ ] TS bridge 与 Python `sys.modules` 的统一 module identity
+- [ ] Python module reload 语义
 - [ ] 协议版本握手
 - [ ] bytes、BigInt 与 non-finite number 标签
 - [ ] JS event loop 与 Python 协作式任务调度
@@ -74,7 +76,7 @@
 ## M4：语言级 interop
 
 - [x] TS `import x from "./x.py"` loader（v1：ESM 合成，JSON 常量 + callable wrapper）
-- [x] Python `import js.x` finder/loader（v1：路径 specifier；裸包名待 resolver）
+- [x] Python 原生无前缀 import finder/loader（Python resolver 优先，Bun resolver fallback；`js.import_module()` 用于动态/路径型 specifier）
 - [x] callable proxy（v1：双向同步，按 specifier+name 无句柄）
 - [ ] Promise / coroutine 映射
 - [ ] Python→JS 安全重入
