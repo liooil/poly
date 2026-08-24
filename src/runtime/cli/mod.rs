@@ -2222,8 +2222,8 @@ Learn more about Poly at <magenta>https://github.com/liooil/poly<r>
                     "\
 <b>Usage<r>: <b><green>poly sync<r> <cyan>[options]<r>
 
-Resolve the current project's Python dependencies, update uv.lock, and install
-the production dependency graph into .poly/python.
+Resolve the current project's declared Python dependencies, update uv.lock, and install
+the production dependency graph into .poly/python. Without pyproject.toml, this is a no-op.
 
 <b>Options:<r>
   <cyan>--frozen<r>                 Require and consume the existing uv.lock

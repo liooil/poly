@@ -4,6 +4,7 @@ use bstr::BStr;
 use bun_core::{self as bun, Global, Output};
 
 use crate::cli::command::{Tag, tag_print_help};
+use crate::project::ProjectContext;
 
 pub(crate) struct SyncCommand;
 
@@ -42,6 +43,22 @@ impl SyncCommand {
                 Global::exit(1);
             }),
         };
+        let context = ProjectContext::discover(&project).unwrap_or_else(|error| {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> cannot inspect the project directory: {}",
+                error
+            );
+            Output::flush();
+            Global::exit(1);
+        });
+        if !context.has_python_project() {
+            bun_core::prettyln!(
+                "<yellow>No Python project found under <b>{}<r>; nothing to sync.",
+                context.root.display()
+            );
+            Output::flush();
+            return Ok(());
+        }
         let executable = std::env::current_exe().unwrap_or_else(|error| {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> cannot locate the Poly executable: {}",
@@ -50,7 +67,7 @@ impl SyncCommand {
             Output::flush();
             Global::exit(1);
         });
-        let mut options = poly_uv::SyncOptions::new(project, executable);
+        let mut options = poly_uv::SyncOptions::new(context.root, executable);
         options.smoke_check = check;
         let report = if frozen {
             poly_uv::sync_frozen(&options)

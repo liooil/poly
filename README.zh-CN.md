@@ -62,6 +62,7 @@ poly build app.ts      # 生成独立应用
 
 `poly run` 的入口分派、多语言 REPL 和同进程 Python 依赖同步属于当前原型。
 `poly build` 尚未实现。
+单个 `.ts` 或 `.py` 文件可以在没有 `package.json`、`pyproject.toml`、`poly.toml` 或锁文件时直接运行；只有声明 Python 依赖后，`poly sync` 才会进入 uv 解析和 staging 流程。
 
 REPL history 由所有语言共享。回看其他模式的记录时会显示为 `.py value = 42`
 这样的 inline 命令，从而仍在最初录入它的语言中执行。

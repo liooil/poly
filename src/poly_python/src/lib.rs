@@ -2095,6 +2095,19 @@ mod tests {
     }
 
     #[test]
+    fn standalone_file_imports_local_sibling_without_project_metadata() {
+        run_with_big_stack(|| {
+            let directory = tempfile::tempdir().expect("create script directory");
+            fs::write(directory.path().join("helper.py"), "VALUE = 42\n").expect("write helper");
+            let script = directory.path().join("main.py");
+            fs::write(&script, "from helper import VALUE\nassert VALUE == 42\n")
+                .expect("write Python entrypoint");
+
+            assert_eq!(run_file(&script, &[]).expect("run local entrypoint"), 0);
+        });
+    }
+
+    #[test]
     fn standalone_file_imports_synced_project_package() {
         run_with_big_stack(|| {
             let directory = tempfile::tempdir().expect("create synced project");

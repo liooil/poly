@@ -154,6 +154,7 @@ tagged values, and explicit lifetime semantics.
 | Static staged-wheel compatibility reports | Implemented |
 | `poly sync --check` RustPython smoke imports | Implemented |
 | `poly build` standalone applications | Planned |
+Single `.ts` or `.py` files run without `package.json`, `pyproject.toml`, `poly.toml`, or lockfiles. `poly sync` enters uv resolution and staging only after Python dependencies are declared.
 
 See the [validation record](poly/docs/validation.md) for the exact verified
 boundary and the [roadmap](poly/docs/roadmap.md) for planned work.

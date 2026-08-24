@@ -195,6 +195,40 @@ describe("bun", () => {
     });
   });
 
+  describe("zero-config entrypoints", () => {
+    test("runs TypeScript without project metadata", async () => {
+      using dir = tempDir("poly-zero-config-ts", { "main.ts": "console.log(42);\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "main.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("42\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("runs Python without project metadata", async () => {
+      using dir = tempDir("poly-zero-config-python", { "main.py": "print(42)\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "main.py"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("42\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("sync", () => {
     test("resolves an empty project and writes uv.lock", async () => {
       using dir = tempDir("poly-sync-resolve", {
@@ -231,6 +265,23 @@ describe("bun", () => {
       expect(stdout).toContain("Checked 0 Python imports across 0 packages");
       expect(stderr).toBe("");
       expect(await Bun.file(`${dir}/uv.lock`).text()).toContain('requires-python = ">=3.12"');
+      expect(exitCode).toBe(0);
+    });
+
+    test("does nothing when no Python project metadata exists", async () => {
+      using dir = tempDir("poly-sync-no-project", { "main.ts": "console.log(42);\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sync", "--project", String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("No Python project found");
+      expect(stderr).toBe("");
+      expect(await Bun.file(`${dir}/uv.lock`).exists()).toBe(false);
+      expect(await Bun.file(`${dir}/.poly/python`).exists()).toBe(false);
       expect(exitCode).toBe(0);
     });
 

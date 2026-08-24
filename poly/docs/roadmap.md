@@ -19,8 +19,8 @@
 
 ## M1：可开发的双语言项目
 
-- [ ] `poly init`
-- [ ] 无需 `poly.toml` 的项目发现与入口分派
+- [ ] `poly init`（便利性脚手架，非项目运行前置条件）
+- [x] 无需 `poly.toml` 的零配置入口运行与渐进式元数据发现
 - [ ] Python module cache 与 reload 语义
 - [ ] 协议版本握手
 - [ ] bytes、BigInt 与 non-finite number 标签

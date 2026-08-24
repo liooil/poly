@@ -1,5 +1,20 @@
 # 验证记录
 
+## 2026-08-24：零配置入口与可选项目元数据
+
+- `cargo fmt --all --check`
+- `cargo test --locked -p poly_python`
+  - 20 项通过；覆盖无 `pyproject.toml` 的 Python 入口导入本地 sibling module。
+- `cargo check --locked -p bun_runtime --tests`
+  - 通过；覆盖新的可选 `ProjectContext` 与 CLI sync 路径。
+- `bun bd test test/cli/bun.test.ts -t "zero-config|sync"`
+  - debug build 与回归命令退出码为 0；覆盖 TypeScript/Python 零配置入口和无
+    `pyproject.toml` 时的 sync 无副作用路径。
+- `bun bd test test/cli/bun.test.ts`
+  - debug build 与完整 CLI 回归命令退出码为 0。
+- `USE_SYSTEM_BUN=1 bun test test/cli/bun.test.ts -t "zero-config|sync"`
+  - 按预期失败；系统 Bun 不支持 Poly Python 入口和 `sync` 命令。
+
 ## 2026-08-24：staging 兼容性报告与 `poly sync --check`
 
 - `cargo fmt --all --check`
